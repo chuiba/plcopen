@@ -234,7 +234,7 @@ inline rt::Result<std::uint32_t> AxisGroup::submit_cartesian_window(GroupCommand
             piece.blend = corner;
             piece.length = corner.length;
             piece.cap = corner_cap;
-            cartesian_.window_.push_back(piece);
+            (void)cartesian_.window_.push_back(piece);
         }
         CartPiece line{};
         const geom::Vec3 t1{out_vec.x / len_b, out_vec.y / len_b,
@@ -251,7 +251,7 @@ inline rt::Result<std::uint32_t> AxisGroup::submit_cartesian_window(GroupCommand
            command.transition_velocity < line.cap) {
             line.cap = command.transition_velocity;
         }
-        cartesian_.window_.push_back(line);
+        (void)cartesian_.window_.push_back(line);
         for(std::size_t i = 0; i < axes_.size(); ++i) {
             cart_tail_joints_[i] = chain[i];
         }
@@ -315,7 +315,7 @@ inline void AxisGroup::cart_window_convert(const GroupCommand &command, double t
                    (passthrough ? 0.0 : trim);
     first.cap = active_command_.velocity;
     cartesian_.window_.clear();
-    cartesian_.window_.push_back(first);
+    (void)cartesian_.window_.push_back(first);
     cartesian_.window_entry_velocity_ = live.velocity < 0.0 ? 0.0 : live.velocity;
     cartesian_.window_entry_acceleration_ = live.acceleration;
     cartesian_.window_acceleration_ = active_command_.acceleration;

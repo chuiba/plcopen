@@ -159,13 +159,13 @@ int check_axis_queue_matrix()
                 static_cast<axis::CommandKind>(scenario % 7),
                 static_cast<axis::BufferMode>(1 + (index % 3)));
             queued.value = (index % 2 == 0 ? 1.0 : -1.0) * (index + 1) * 0.1;
-            model.submit(queued);
+            (void)model.submit(queued);
         }
         for(int cycle = 0; cycle < 256; ++cycle) {
             model.cycle();
             if(!finite(model.snapshot())) return fail("axis queue finite");
         }
-        model.submit(command(axis::CommandKind::halt, axis::BufferMode::aborting));
+        (void)model.submit(command(axis::CommandKind::halt, axis::BufferMode::aborting));
         for(int cycle = 0; cycle < 64; ++cycle) model.cycle();
     }
     return 0;
@@ -258,14 +258,14 @@ int check_group_transition_matrix()
             next.relative = action % 2 != 0;
             next.target.value[0] = action % 2 == 0 ? -1.0 : 0.5;
             next.target.value[1] = action % 3 == 0 ? 2.0 : -0.5;
-            group.submit_linear(next);
+            (void)group.submit_linear(next);
             if(action == 0) group.set_group_override(0.0);
             if(action == 1) group.set_group_override(0.25);
             if(action == 2) group.stop(0.05, 0.01);
             if(action == 3) group.interrupt(0.05, 0.01);
             if(action == 4) members[0].trigger_error();
             if(action == 5) group.disable();
-            if(action == 6) group.command_info(accepted.value());
+            if(action == 6) (void)group.command_info(accepted.value());
             if(action == 7) group.set_window_depth(2);
             for(int cycle = 0; cycle < 256; ++cycle) {
                 group.cycle();
@@ -301,7 +301,7 @@ int check_sync_and_stream_matrix()
             gear.approach_velocity = scenario % 3 == 0 ? 0.1 : 0.0;
             gear.source = scenario % 2 == 0 ? axis::MasterValueSource::command
                                             : axis::MasterValueSource::actual;
-            slave.gear_in(gear);
+            (void)slave.gear_in(gear);
         } else if(scenario < 8) {
             axis::CamInCommand cam{};
             cam.master = &master1;
@@ -309,7 +309,7 @@ int check_sync_and_stream_matrix()
             cam.interpolation = scenario % 2 == 0 ? exec::CamInterpolation::linear
                                                    : exec::CamInterpolation::spline;
             cam.master_start_distance = scenario % 3 == 0 ? 0.5 : 0.0;
-            slave.cam_in(cam);
+            (void)slave.cam_in(cam);
         } else {
             axis::CombineAxesCommand combine{};
             combine.master1 = &master1;
@@ -317,9 +317,9 @@ int check_sync_and_stream_matrix()
             combine.mode = scenario % 2 == 0 ? axis::CombineMode::add_axes
                                               : axis::CombineMode::sub_axes;
             combine.source_m1 = axis::MasterValueSource::actual;
-            slave.combine_in(combine);
+            (void)slave.combine_in(combine);
         }
-        master1.submit(command(axis::CommandKind::move_absolute,
+        (void)master1.submit(command(axis::CommandKind::move_absolute,
                                axis::BufferMode::aborting));
         for(int cycle = 0; cycle < 128; ++cycle) {
             master1.cycle();
@@ -329,10 +329,10 @@ int check_sync_and_stream_matrix()
         }
         axis::PhasingCommand phase{};
         phase.phase_shift = 0.5;
-        slave.submit_phasing(phase);
+        (void)slave.submit_phasing(phase);
         phase.phase_shift = -0.25;
         phase.relative = true;
-        slave.submit_phasing(phase);
+        (void)slave.submit_phasing(phase);
         slave.sync_out();
 
         stream::StreamFilterConfig config{};
@@ -399,7 +399,7 @@ int check_axis_property_sequences()
                 value.direction = static_cast<axis::Direction>((bits >> 16) % 5);
                 value.end_velocity = (bits & 16u) != 0 ? 0.05 : 0.0;
                 value.min_duration_cycles = static_cast<std::int64_t>((bits >> 20) % 32);
-                model.submit(value);
+                (void)model.submit(value);
                 break;
             }
             case 4: model.set_power((bits & 0x100u) != 0); break;
@@ -408,7 +408,7 @@ int check_axis_property_sequences()
             case 7: model.reset_error(); break;
             case 8: model.shift_coordinates(random.signed_value()); break;
             case 9:
-                model.submit_superimposed(random.signed_value(), 0.1, 0.1, 0.1, 0.01);
+                (void)model.submit_superimposed(random.signed_value(), 0.1, 0.1, 0.1, 0.01);
                 break;
             case 10: model.halt_superimposed(1.0, 1.0); break;
             case 11: model.home_direct(random.signed_value()); break;
@@ -419,8 +419,8 @@ int check_axis_property_sequences()
             case 13: model.set_digital_input(bits % 18, (bits & 0x200u) != 0); break;
             case 14: model.set_digital_output(bits % 18, (bits & 0x400u) != 0); break;
             case 15: model.abort_trigger(bits % 18); break;
-            case 16: model.begin_passive_homing(bits % 18); break;
-            default: model.abort_passive_homing(); break;
+            case 16: (void)model.begin_passive_homing(bits % 18); break;
+            default: (void)model.abort_passive_homing(); break;
             }
             const int cycles = 1 + static_cast<int>((bits >> 24) % 8);
             for(int cycle = 0; cycle < cycles; ++cycle) model.cycle();
@@ -470,9 +470,9 @@ int check_group_property_sequences()
                 value.transition_parameter = (bits & 0x20u) != 0 ? 0.1 : 0.0;
                 value.relative = (bits & 0x40u) != 0;
                 if(bits % 16 == 2) {
-                    group.submit_circular(value);
+                    (void)group.submit_circular(value);
                 } else {
-                    group.submit_linear(value);
+                    (void)group.submit_linear(value);
                 }
                 break;
             }
@@ -480,7 +480,7 @@ int check_group_property_sequences()
                 axis::GroupPosition target{};
                 target.size = random.next() % (axis::AxisGroup::MaxAxes + 2);
                 for(double &entry : target.value) entry = random.signed_value();
-                submit_direct(group, target, (bits & 1u) != 0, 0.2, 0.05, 0.05, 0.01);
+                (void)submit_direct(group, target, (bits & 1u) != 0, 0.2, 0.05, 0.05, 0.01);
                 break;
             }
             case 4: group.set_group_override(static_cast<double>(bits % 150) / 100.0); break;
@@ -495,7 +495,7 @@ int check_group_property_sequences()
             case 13: group.set_tool_offset(random.signed_value(), random.signed_value(),
                                            random.signed_value()); break;
             case 14: group.set_cartesian_velocity_limit(std::fabs(random.signed_value())); break;
-            default: group.command_info(bits); break;
+            default: (void)group.command_info(bits); break;
             }
             for(std::size_t index = 0; index < count; ++index) {
                 if((bits & (1u << (index % 16))) != 0 && step % 7 == 0) {
@@ -1200,7 +1200,7 @@ int check_axis_standalone_writer_matrix()
     axis::AxisCommand queued = command(axis::CommandKind::move_absolute,
                                        axis::BufferMode::buffered);
     queued.value = 2.0;
-    base.submit(queued);
+    (void)base.submit(queued);
     if(!base.has_standalone_motion()) return fail("queued motion standalone writer");
 
     axis::AxisModel master;
@@ -2297,7 +2297,7 @@ int check_override_shift_sync_stream()
         cmd.deceleration = 0.1;
         cmd.jerk = 0.05;
         cmd.buffer_mode = axis::BufferMode::aborting;
-        model.submit(cmd);
+        (void)model.submit(cmd);
         for(int i = 0; i < 3; ++i) model.cycle();
 
         // Queue a buffered absolute command
@@ -2309,11 +2309,11 @@ int check_override_shift_sync_stream()
         q.deceleration = 0.1;
         q.jerk = 0.05;
         q.buffer_mode = axis::BufferMode::buffered;
-        model.submit(q);
+        (void)model.submit(q);
 
         // Arm a probe before shifting
         model.set_digital_input(0, false);
-        model.arm_touch_probe(0, true, 0.0, 20.0);
+        (void)model.arm_touch_probe(0, true, 0.0, 20.0);
 
         // Shift position while active + queued + probe
         if(model.shift_coordinates(0.5) != rt::ErrorCode::ok)
@@ -2337,7 +2337,7 @@ int check_override_shift_sync_stream()
         cmd.deceleration = 0.2;
         cmd.jerk = 0.1;
         cmd.buffer_mode = axis::BufferMode::aborting;
-        model.submit(cmd);
+        (void)model.submit(cmd);
         for(int i = 0; i < 5; ++i) model.cycle();
 
         // On-the-fly coordinate remap
@@ -2452,7 +2452,7 @@ int check_override_shift_sync_stream()
         cmd.deceleration = 0.1;
         cmd.jerk = 0.05;
         cmd.buffer_mode = axis::BufferMode::aborting;
-        model.submit(cmd);
+        (void)model.submit(cmd);
         for(int i = 0; i < 5; ++i) model.cycle();
 
         // Lose power feedback → errorstop
@@ -2537,7 +2537,7 @@ int check_override_shift_sync_stream()
         mcmd.deceleration = 0.2;
         mcmd.jerk = 0.1;
         mcmd.buffer_mode = axis::BufferMode::aborting;
-        master.submit(mcmd);
+        (void)master.submit(mcmd);
         for(int i = 0; i < 10; ++i) { master.cycle(); slave.cycle(); }
 
         axis::GearInCommand gear{};
@@ -2570,7 +2570,7 @@ int check_override_shift_sync_stream()
         direct_phase.velocity = 0.0;
         direct_phase.buffer_mode = axis::BufferMode::aborting;
         direct_phase.relative = true;
-        slave.submit_phasing(direct_phase);
+        (void)slave.submit_phasing(direct_phase);
         for(int i = 0; i < 5; ++i) { master.cycle(); slave.cycle(); }
 
         // Phasing query
@@ -2739,12 +2739,12 @@ int check_override_shift_sync_stream()
         model.reset_error();
 
         // Invalid: engage while already streaming
-        model.stream_engage(config);
+        (void)model.stream_engage(config);
         if(model.stream_engage(config))
             return fail("stream: double engage accepted");
 
         // Halt while streaming to abort
-        model.submit(command(axis::CommandKind::halt, axis::BufferMode::aborting));
+        (void)model.submit(command(axis::CommandKind::halt, axis::BufferMode::aborting));
         for(int i = 0; i < 50; ++i) model.cycle();
     }
 
@@ -2762,7 +2762,7 @@ int check_override_shift_sync_stream()
         cmd.deceleration = 0.1;
         cmd.jerk = 0.05;
         cmd.buffer_mode = axis::BufferMode::aborting;
-        model.submit(cmd);
+        (void)model.submit(cmd);
         for(int i = 0; i < 5; ++i) model.cycle();
 
         // Superimposed on top
@@ -2831,7 +2831,7 @@ int check_override_shift_sync_stream()
         cmd.deceleration = 0.1;
         cmd.jerk = 0.05;
         cmd.buffer_mode = axis::BufferMode::aborting;
-        model.submit(cmd);
+        (void)model.submit(cmd);
         for(int i = 0; i < 5; ++i) model.cycle();
 
         const auto homing_id = model.begin_passive_homing(0);
@@ -2847,7 +2847,7 @@ int check_override_shift_sync_stream()
         // Re-arm and abort
         const auto h2 = model.begin_passive_homing(1);
         if(!h2) return fail("passive_homing: begin2");
-        model.abort_passive_homing();
+        (void)model.abort_passive_homing();
         if(model.passive_homing_aborted_id() == 0)
             return fail("passive_homing: abort id");
 
@@ -2915,7 +2915,7 @@ int check_override_shift_sync_stream()
         cmd.deceleration = 0.1;
         cmd.jerk = 0.05;
         cmd.buffer_mode = axis::BufferMode::aborting;
-        model.submit(cmd);
+        (void)model.submit(cmd);
         for(int i = 0; i < 5; ++i) model.cycle();
 
         axis::AxisCommand stop{};
@@ -2950,7 +2950,7 @@ int check_override_shift_sync_stream()
         cmd.deceleration = 0.1;
         cmd.jerk = 0.05;
         cmd.buffer_mode = axis::BufferMode::aborting;
-        model.submit(cmd);
+        (void)model.submit(cmd);
         for(int i = 0; i < 10; ++i) model.cycle();
 
         // Disable positive direction while moving positively → abort
@@ -2984,7 +2984,7 @@ int check_override_shift_sync_stream()
         mcmd.deceleration = 0.1;
         mcmd.jerk = 0.05;
         mcmd.buffer_mode = axis::BufferMode::aborting;
-        master.submit(mcmd);
+        (void)master.submit(mcmd);
         for(int i = 0; i < 5; ++i) { master.cycle(); slave.cycle(); }
 
         axis::GearInCommand gear{};
@@ -2994,7 +2994,7 @@ int check_override_shift_sync_stream()
         gear.acceleration = 0.1;
         gear.deceleration = 0.1;
         gear.jerk = 0.05;
-        slave.gear_in(gear);
+        (void)slave.gear_in(gear);
         for(int i = 0; i < 10; ++i) { master.cycle(); slave.cycle(); }
 
         // Trigger error while synced
@@ -3283,7 +3283,7 @@ int check_fb_homing_io_sync_matrix()
         mcmd.deceleration = 0.2;
         mcmd.jerk = 0.1;
         mcmd.buffer_mode = axis::BufferMode::aborting;
-        master.submit(mcmd);
+        (void)master.submit(mcmd);
         for(int i = 0; i < 10; ++i) { master.cycle(); slave.cycle(); }
 
         // GearIn FB
@@ -3407,7 +3407,7 @@ int check_homing_and_io_paths()
         cmd.deceleration = 0.1;
         cmd.jerk = 0.05;
         cmd.buffer_mode = axis::BufferMode::aborting;
-        model.submit(cmd);
+        (void)model.submit(cmd);
         for(int i = 0; i < 5; ++i) model.cycle();
         model.finish_homing();
     }
@@ -3419,18 +3419,18 @@ int check_homing_and_io_paths()
 
         for(std::size_t i = 0; i < axis::AxisModel::DigitalInputCount; ++i) {
             model.set_digital_input(i, true);
-            model.digital_input(i);
+            (void)model.digital_input(i);
         }
         for(std::size_t i = 0; i < axis::AxisModel::DigitalOutputCount; ++i) {
             model.set_digital_output(i, (i % 2) == 0);
-            model.digital_output(i);
+            (void)model.digital_output(i);
         }
 
         // Out of range
         model.set_digital_input(99, true);
-        model.digital_input(99);
+        (void)model.digital_input(99);
         model.set_digital_output(99, true);
-        model.digital_output(99);
+        (void)model.digital_output(99);
     }
 
     // --- Touch probe with window ---
@@ -3445,7 +3445,7 @@ int check_homing_and_io_paths()
         cmd.deceleration = 0.2;
         cmd.jerk = 0.1;
         cmd.buffer_mode = axis::BufferMode::aborting;
-        model.submit(cmd);
+        (void)model.submit(cmd);
         for(int i = 0; i < 3; ++i) model.cycle();
 
         // Window probe
@@ -3464,14 +3464,14 @@ int check_homing_and_io_paths()
         model.abort_trigger(0);
 
         // Invalid probe
-        model.arm_touch_probe(99, false, 0.0, 0.0);
+        (void)model.arm_touch_probe(99, false, 0.0, 0.0);
         model.abort_trigger(99);
         model.probe_captured(99);
         model.probe_recorded_position(99);
         model.probe_command_id(99);
 
         // Invalid window: first > last
-        model.arm_touch_probe(1, true, 5.0, 1.0);
+        (void)model.arm_touch_probe(1, true, 5.0, 1.0);
     }
 
     // --- Read/write axis parameters ---
@@ -3481,15 +3481,15 @@ int check_homing_and_io_paths()
 
         model.write_parameter(axis::AxisParameter::sw_limit_pos, 100.0);
         model.write_parameter(axis::AxisParameter::sw_limit_neg, -100.0);
-        model.read_parameter(axis::AxisParameter::commanded_position);
-        model.read_parameter(axis::AxisParameter::sw_limit_pos);
-        model.read_parameter(axis::AxisParameter::sw_limit_neg);
+        (void)model.read_parameter(axis::AxisParameter::commanded_position);
+        (void)model.read_parameter(axis::AxisParameter::sw_limit_pos);
+        (void)model.read_parameter(axis::AxisParameter::sw_limit_neg);
 
         // Write bool parameter
         model.write_bool_parameter(axis::AxisParameter::enable_limit_pos, true);
         model.write_bool_parameter(axis::AxisParameter::enable_limit_neg, true);
-        model.read_bool_parameter(axis::AxisParameter::enable_limit_pos);
-        model.read_bool_parameter(axis::AxisParameter::enable_limit_neg);
+        (void)model.read_bool_parameter(axis::AxisParameter::enable_limit_pos);
+        (void)model.read_bool_parameter(axis::AxisParameter::enable_limit_neg);
 
         // Invalid: limits crossing
         model.write_parameter(axis::AxisParameter::sw_limit_pos, -200.0);
@@ -3533,7 +3533,7 @@ int check_homing_and_io_paths()
         cmd.deceleration = 0.1;
         cmd.jerk = 0.05;
         cmd.buffer_mode = axis::BufferMode::aborting;
-        model.submit(cmd);
+        (void)model.submit(cmd);
         for(int i = 0; i < 5; ++i) model.cycle();
         if(model.set_position(0.0) == rt::ErrorCode::ok)
             return fail("set_position: moving accepted");

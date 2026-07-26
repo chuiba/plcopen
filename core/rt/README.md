@@ -24,6 +24,14 @@ RT constraints:
 - no OS calls or wall-clock reads;
 - no floating-point time accumulation.
 
+错误返回契约：L0 全部携带错误信息的返回值（`Result<T>`、容器/队列的
+`ErrorCode`/`bool` 返回）均标注 `[[nodiscard]]`，且核心目标以
+`-Werror=unused-result`（MSVC `/we4834`）强制——丢弃错误返回值无法
+编译通过。**有意**丢弃必须写 `(void)f()`，并保证语境中存在使丢弃安全
+的守卫（如 pop 前的非空检查、push 前的容量预检）。消费安装头文件的
+下游若自带 `-Werror=unused-result`，其调用点将同样收到诊断（源码级
+契约，无 ABI 影响）。
+
 依赖与消费者：L0 只依赖对所提供类型不分配的 C++17 标准库设施；L0 不得依赖
 PLCopen FB 语义、旧 `src/` 或 adapters。作为阶梯首层（L0-L7 阶梯 + 支撑库
 形态见[架构综述](../../doc/design/architecture-review-2026-07.md)），全核所有

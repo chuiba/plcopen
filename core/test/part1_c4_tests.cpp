@@ -343,10 +343,10 @@ int check_relative_additive_and_signed_inputs()
 {
     axis::AxisModel relative_axis;
     relative_axis.set_power(true);
-    relative_axis.submit(move_command(axis::CommandKind::move_absolute, 10.0));
+    (void)relative_axis.submit(move_command(axis::CommandKind::move_absolute, 10.0));
     for(int cycle = 0; cycle < 3; ++cycle) relative_axis.cycle();
     const double relative_base = relative_axis.snapshot().command_position;
-    relative_axis.submit(move_command(axis::CommandKind::move_relative, 2.0));
+    (void)relative_axis.submit(move_command(axis::CommandKind::move_relative, 2.0));
     for(int cycle = 0; cycle < 2000 &&
                          relative_axis.snapshot().active_command_id != 0; ++cycle) {
         relative_axis.cycle();
@@ -357,9 +357,9 @@ int check_relative_additive_and_signed_inputs()
 
     axis::AxisModel additive_axis;
     additive_axis.set_power(true);
-    additive_axis.submit(move_command(axis::CommandKind::move_absolute, 10.0));
+    (void)additive_axis.submit(move_command(axis::CommandKind::move_absolute, 10.0));
     for(int cycle = 0; cycle < 3; ++cycle) additive_axis.cycle();
-    additive_axis.submit(move_command(axis::CommandKind::move_additive, 2.0));
+    (void)additive_axis.submit(move_command(axis::CommandKind::move_additive, 2.0));
     for(int cycle = 0; cycle < 2000 &&
                          additive_axis.snapshot().active_command_id != 0; ++cycle) {
         additive_axis.cycle();
@@ -554,7 +554,7 @@ int check_torque_acceleration_and_set_position()
 
     axis::AxisModel position_axis;
     position_axis.set_power(true);
-    position_axis.submit(move_command(axis::CommandKind::move_absolute, 10.0));
+    (void)position_axis.submit(move_command(axis::CommandKind::move_absolute, 10.0));
     for(int cycle = 0; cycle < 3; ++cycle) position_axis.cycle();
     const axis::AxisSnapshot before = position_axis.snapshot();
     fb::FbSetPosition set;
@@ -583,7 +583,7 @@ int check_torque_acceleration_and_set_position()
     velocity_position_axis.write_bool_parameter(axis::AxisParameter::enable_limit_neg, true);
     velocity_position_axis.write_bool_parameter(axis::AxisParameter::enable_limit_pos, true);
     velocity_position_axis.set_position(90.0);
-    velocity_position_axis.submit(move_command(axis::CommandKind::move_velocity, 1.0));
+    (void)velocity_position_axis.submit(move_command(axis::CommandKind::move_velocity, 1.0));
     velocity_position_axis.cycle();
     fb::FbSetPosition set_velocity_position;
     set_velocity_position.axis_ref = &velocity_position_axis;
@@ -678,7 +678,7 @@ int check_superimposed_and_sync_out()
     group.add_axis(master);
     group.add_axis(slave);
     group.enable();
-    master.submit(move_command(axis::CommandKind::move_velocity, 1.0));
+    (void)master.submit(move_command(axis::CommandKind::move_velocity, 1.0));
     master.cycle();
 
     fb::FbGearIn gear;

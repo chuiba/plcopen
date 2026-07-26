@@ -73,8 +73,11 @@ class GroupCartesianState
         std::size_t size() const { return data_->size(); }
         Piece &operator[](std::size_t index) { return (*data_)[index]; }
         const Piece &operator[](std::size_t index) const { return (*data_)[index]; }
-        rt::ErrorCode push_back(const Piece &value) { return data_->push_back(value); }
-        void pop_back() { data_->pop_back(); }
+        [[nodiscard]] rt::ErrorCode push_back(const Piece &value)
+        {
+            return data_->push_back(value);
+        }
+        [[nodiscard]] rt::ErrorCode pop_back() { return data_->pop_back(); }
         void clear() { data_->clear(); }
 
       private:

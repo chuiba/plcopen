@@ -437,9 +437,9 @@ int main(int argc, char **argv)
     final_marker.position[0] = current.position[0];
     final_marker.position[1] = current.position[1];
     final_marker.status = current.status;
-    snapshot_queue.push(final_marker);
+    const bool final_marker_pushed = snapshot_queue.push(final_marker);
     GroupSnapshot final_snapshot{};
-    const bool final_snapshot_received =
+    const bool final_snapshot_received = final_marker_pushed &&
         snapshot_queue.pop(final_snapshot) && final_snapshot.tick == cycles;
     if(final_snapshot_received) {
         ++snapshot_reads;

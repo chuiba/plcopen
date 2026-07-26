@@ -256,7 +256,7 @@ inline rt::Result<std::uint32_t> AxisGroup::submit_blend(GroupCommand command)
 
     bool late = false;
     if(!window_rebuild(late)) {
-        joint_window_.segments_.pop_back();
+        (void)joint_window_.segments_.pop_back();
         WindowSegment &restore = joint_window_.segments_[joint_window_.segments_.size() - 1];
         restore.trim_out = saved_trim_out;
         restore.node = saved_node;
@@ -281,7 +281,7 @@ inline rt::Result<std::uint32_t> AxisGroup::submit_blend(GroupCommand command)
         if(standalone &&
            window_remaining_cycles() >=
                old_remaining + standalone.value().duration_cycles()) {
-            joint_window_.segments_.pop_back();
+            (void)joint_window_.segments_.pop_back();
             WindowSegment &restore = joint_window_.segments_[joint_window_.segments_.size() - 1];
             restore.trim_out = saved_trim_out;
             restore.node = saved_node;
@@ -342,7 +342,7 @@ inline bool AxisGroup::convert_active_linear_to_window()
     seg0.entry_velocity = raw.velocity * scale1; // updated by rebuild
     seg0.profile = active_profile_;              // replaced by rebuild
     joint_window_.segments_.clear();
-    joint_window_.segments_.push_back(seg0);
+    (void)joint_window_.segments_.push_back(seg0);
     joint_window_.seed_state_ = otg::State1D{raw.position * scale1, raw.velocity * scale1,
                                       raw.acceleration * scale1};
     joint_window_.index_ = 0;
@@ -475,7 +475,7 @@ inline rt::Result<std::uint32_t> AxisGroup::submit_blend_arc(GroupCommand comman
 
     bool late = false;
     if(!window_rebuild(late)) {
-        joint_window_.segments_.pop_back();
+        (void)joint_window_.segments_.pop_back();
         WindowSegment &restore = joint_window_.segments_[joint_window_.segments_.size() - 1];
         restore.node = saved_node;
         if(converted) {
@@ -495,7 +495,7 @@ inline rt::Result<std::uint32_t> AxisGroup::submit_blend_arc(GroupCommand comman
         if(standalone &&
            window_remaining_cycles() >=
                old_remaining + standalone.value().duration_cycles()) {
-            joint_window_.segments_.pop_back();
+            (void)joint_window_.segments_.pop_back();
             WindowSegment &restore = joint_window_.segments_[joint_window_.segments_.size() - 1];
             restore.node = saved_node;
             if(!window_rebuild(late)) {

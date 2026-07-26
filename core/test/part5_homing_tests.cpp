@@ -2698,7 +2698,7 @@ int check_step_distance_coded_input_validation_matrix()
         motion.acceleration = 0.1;
         motion.deceleration = 0.1;
         motion.jerk = 0.1;
-        group.submit_linear(motion);
+        (void)group.submit_linear(motion);
         fb::FbStepDistanceCoded step;
         step.axis_ref = &members[0];
         step.bind_distance_code_map(&map);

@@ -526,16 +526,16 @@ int main(int argc, char **argv)
     std::clock_t start = std::clock();
     for(int i = 0; i < Iterations; ++i) {
         values.clear();
-        values.push_back(i);
-        values.push_back(i + 1);
+        (void)values.push_back(i);
+        (void)values.push_back(i + 1);
         sink += values[0];
     }
     const double vector_ms = millis_since(start);
 
     start = std::clock();
     for(int i = 0; i < Iterations; ++i) {
-        queue.push(i);
-        queue.pop(sink);
+        (void)queue.push(i);
+        (void)queue.pop(sink);
     }
     const double queue_ms = millis_since(start);
 
@@ -569,13 +569,13 @@ int main(int argc, char **argv)
         move.acceleration = 0.001;
         move.deceleration = 0.001;
         move.jerk = 0.001;
-        bench_master.submit(move);
-        bench_master.submit_superimposed(1.0e9, 0.0005, 0.001, 0.001, 0.001);
-        bench_master.arm_touch_probe(0, false, 0.0, 0.0);
+        (void)bench_master.submit(move);
+        (void)bench_master.submit_superimposed(1.0e9, 0.0005, 0.001, 0.001, 0.001);
+        (void)bench_master.arm_touch_probe(0, false, 0.0, 0.0);
         axis::GearInCommand gear{};
         gear.master = &bench_master;
         gear.ratio_numerator = 2.0;
-        bench_slave.gear_in(gear);
+        (void)bench_slave.gear_in(gear);
     }
     start = std::clock();
     for(int i = 0; i < Iterations; ++i) {
@@ -600,7 +600,7 @@ int main(int argc, char **argv)
         approach.target.size = 2;
         approach.target.value[0] = 1.0;
         approach.velocity = 0.5;
-        bench_group.submit_linear(approach);
+        (void)bench_group.submit_linear(approach);
         for(int i = 0; i < 100 && bench_group.status() != axis::GroupStatus::standby; ++i) {
             bench_group.cycle();
         }
@@ -827,7 +827,7 @@ int main(int argc, char **argv)
         approach.acceleration = 0.004;
         approach.deceleration = 0.004;
         approach.jerk = 0.004;
-        pose_group.submit_linear(approach);
+        (void)pose_group.submit_linear(approach);
         for(int i = 0; i < 20000 && pose_group.status() != axis::GroupStatus::standby;
             ++i) {
             pose_group.cycle();

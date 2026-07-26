@@ -47,7 +47,7 @@ public:
         return size_ == Capacity;
     }
 
-    constexpr ErrorCode push_back(const T &value)
+    [[nodiscard]] constexpr ErrorCode push_back(const T &value)
     {
         if(full()) {
             return ErrorCode::capacity_exceeded;
@@ -57,7 +57,7 @@ public:
         return ErrorCode::ok;
     }
 
-    constexpr ErrorCode pop_back()
+    [[nodiscard]] constexpr ErrorCode pop_back()
     {
         if(empty()) {
             return ErrorCode::out_of_range;

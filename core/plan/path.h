@@ -131,8 +131,8 @@ rt::Result<LookAheadPlan<Capacity>> compute_lookahead(const PathBuffer<Capacity>
     LookAheadPlan<Capacity> plan{};
     const std::size_t count = path.size() < window ? path.size() : window;
     for(std::size_t i = 0; i < count; ++i) {
-        plan.entry_speed.push_back(max_speed);
-        plan.exit_speed.push_back(max_speed);
+        (void)plan.entry_speed.push_back(max_speed);
+        (void)plan.exit_speed.push_back(max_speed);
     }
 
     if(count == 0) {

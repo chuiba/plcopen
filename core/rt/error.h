@@ -18,7 +18,7 @@ enum class ErrorCode
     limit_infeasible,
 };
 
-template <typename T> class Result
+template <typename T> class [[nodiscard]] Result
 {
 public:
     static constexpr Result success(const T &value)

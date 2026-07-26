@@ -512,7 +512,7 @@ int check_move_path_matches_manual()
     cmd0.deceleration = dec;
     cmd0.jerk = jrk;
     cmd0.buffer_mode = axis::BufferMode::aborting;
-    group_manual.submit_linear(cmd0);
+    (void)group_manual.submit_linear(cmd0);
 
     axis::GroupCommand cmd1{};
     cmd1.target.size = 2;
@@ -523,7 +523,7 @@ int check_move_path_matches_manual()
     cmd1.deceleration = dec;
     cmd1.jerk = jrk;
     cmd1.buffer_mode = axis::BufferMode::buffered;
-    group_manual.submit_linear(cmd1);
+    (void)group_manual.submit_linear(cmd1);
 
     axis::GroupCommand cmd2{};
     cmd2.target.size = 2;
@@ -534,7 +534,7 @@ int check_move_path_matches_manual()
     cmd2.deceleration = dec;
     cmd2.jerk = jrk;
     cmd2.buffer_mode = axis::BufferMode::buffered;
-    group_manual.submit_linear(cmd2);
+    (void)group_manual.submit_linear(cmd2);
 
     for(int c = 0; c < 50000; ++c) {
         const bool path_done = group_path.status() == axis::GroupStatus::standby;
@@ -620,7 +620,7 @@ int check_move_path_blending()
     cmd0.deceleration = dec;
     cmd0.jerk = jrk;
     cmd0.buffer_mode = axis::BufferMode::aborting;
-    group_manual.submit_linear(cmd0);
+    (void)group_manual.submit_linear(cmd0);
 
     axis::GroupCommand cmd1{};
     cmd1.target.size = 2;
@@ -633,7 +633,7 @@ int check_move_path_blending()
     cmd1.buffer_mode = axis::BufferMode::blending_low;
     cmd1.transition_mode = tm;
     cmd1.transition_parameter = tp;
-    group_manual.submit_linear(cmd1);
+    (void)group_manual.submit_linear(cmd1);
 
     axis::GroupCommand cmd2{};
     cmd2.target.size = 2;
@@ -644,7 +644,7 @@ int check_move_path_blending()
     cmd2.deceleration = dec;
     cmd2.jerk = jrk;
     cmd2.buffer_mode = axis::BufferMode::buffered;
-    group_manual.submit_linear(cmd2);
+    (void)group_manual.submit_linear(cmd2);
 
     for(int c = 0; c < 50000; ++c) {
         const bool path_done = group_path.status() == axis::GroupStatus::standby;

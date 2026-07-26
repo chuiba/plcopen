@@ -237,8 +237,8 @@ int main()
 
     g_alloc_frozen = true;
     for(int i = 0; i < 1000; ++i) {
-        queue.push(i);
-        queue.pop(out);
+        (void)queue.push(i);
+        (void)queue.pop(out);
     }
     g_alloc_frozen = false;
     if(g_alloc_violations != 0) {

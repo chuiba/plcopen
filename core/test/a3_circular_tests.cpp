@@ -87,7 +87,7 @@ int check_quarter_arc_radius_and_endpoint()
     to_start.target.value[0] = 1.0;
     to_start.target.value[1] = 0.0;
     to_start.velocity = 0.5;
-    rig.group.submit_linear(to_start);
+    (void)rig.group.submit_linear(to_start);
     if(run_to_standstill(rig.group) < 0) {
         return fail("linear approach reaches start");
     }
@@ -142,7 +142,7 @@ int check_cruise_speed_ripple()
     to_start.target.value[0] = 2.0;
     to_start.target.value[1] = 0.0;
     to_start.velocity = 0.5;
-    rig.group.submit_linear(to_start);
+    (void)rig.group.submit_linear(to_start);
     if(run_to_standstill(rig.group) < 0) {
         return fail("cruise approach");
     }
@@ -200,7 +200,7 @@ int check_third_axis_linear_following()
     to_start.target.value[1] = 0.0;
     to_start.target.value[2] = 0.0;
     to_start.velocity = 0.5;
-    rig.group.submit_linear(to_start);
+    (void)rig.group.submit_linear(to_start);
     if(run_to_standstill(rig.group) < 0) {
         return fail("helical approach");
     }
@@ -314,7 +314,7 @@ int check_mode_and_pathchoice_contract()
     to_start.target.size = 2;
     to_start.target.value[0] = 1.0;
     to_start.velocity = 0.5;
-    rig.group.submit_linear(to_start);
+    (void)rig.group.submit_linear(to_start);
     run_to_standstill(rig.group);
 
     // CENTER/RADIUS modes are declared unsupported.
@@ -451,7 +451,7 @@ int check_group_stop_stays_on_arc()
     to_start.target.size = 2;
     to_start.target.value[0] = 1.0;
     to_start.velocity = 0.5;
-    rig.group.submit_linear(to_start);
+    (void)rig.group.submit_linear(to_start);
     run_to_standstill(rig.group);
 
     axis::GroupCommand arc = make_quarter_arc(2);

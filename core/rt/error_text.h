@@ -5,7 +5,7 @@
 namespace plcopen::core::rt
 {
 
-constexpr const char *to_string(ErrorCode code)
+[[nodiscard]] constexpr const char *to_string(ErrorCode code)
 {
     switch(code) {
     case ErrorCode::ok:

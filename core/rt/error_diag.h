@@ -14,7 +14,7 @@ struct ErrorDiagnostic
         "upgrade the producer/consumer pair or inspect the raw error value before retrying";
 };
 
-constexpr ErrorDiagnostic diagnose(ErrorCode code)
+[[nodiscard]] constexpr ErrorDiagnostic diagnose(ErrorCode code)
 {
     switch (code)
     {

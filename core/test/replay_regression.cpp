@@ -69,7 +69,7 @@ void run_single_axis_move(Recording &recording)
     recording.id = "core-single-axis-move-v2";
     axis::AxisModel axis;
     axis.set_power(true);
-    axis.submit(make_move(3.0, 0.05));
+    (void)axis.submit(make_move(3.0, 0.05));
     for(std::int64_t tick = 0; tick < 2000; ++tick) {
         axis.cycle();
         recording.emit(tick, 0, axis.snapshot());
@@ -91,7 +91,7 @@ void run_velocity_stop(Recording &recording)
     velocity.kind = axis::CommandKind::move_velocity;
     velocity.value = 1.0;
     velocity.velocity = 0.02;
-    axis.submit(velocity);
+    (void)axis.submit(velocity);
     std::int64_t tick = 0;
     for(; tick < 20; ++tick) {
         axis.cycle();
@@ -100,7 +100,7 @@ void run_velocity_stop(Recording &recording)
 
     axis::AxisCommand stop{};
     stop.kind = axis::CommandKind::stop;
-    axis.submit(stop);
+    (void)axis.submit(stop);
     for(; tick < 80; ++tick) {
         axis.cycle();
         recording.emit(tick, 0, axis.snapshot());
@@ -130,7 +130,7 @@ void run_group_linear(Recording &recording)
     linear.target.value[0] = 3.0;
     linear.target.value[1] = 4.0;
     linear.velocity = 0.25;
-    group.submit_linear(linear);
+    (void)group.submit_linear(linear);
     for(std::int64_t tick = 0; tick < 200; ++tick) {
         group.cycle();
         recording.emit(tick, 0, x.snapshot());
@@ -160,7 +160,7 @@ void run_group_circular(Recording &recording)
     approach.target.value[0] = 1.0;
     approach.target.value[1] = 0.0;
     approach.velocity = 0.25;
-    group.submit_linear(approach);
+    (void)group.submit_linear(approach);
     std::int64_t tick = 0;
     for(; tick < 200; ++tick) {
         group.cycle();
@@ -180,7 +180,7 @@ void run_group_circular(Recording &recording)
     arc.target.value[1] = 1.0;
     arc.velocity = 0.1;
     arc.path_choice = axis::CircPathChoice::counter_clockwise;
-    group.submit_circular(arc);
+    (void)group.submit_circular(arc);
     for(; tick < 600; ++tick) {
         group.cycle();
         recording.emit(tick, 0, x.snapshot());
@@ -215,7 +215,7 @@ void run_group_blend(Recording &recording)
     first.acceleration = 0.002;
     first.deceleration = 0.002;
     first.jerk = 0.002;
-    group.submit_linear(first);
+    (void)group.submit_linear(first);
     std::int64_t tick = 0;
     for(; tick < 5; ++tick) {
         group.cycle();
@@ -229,7 +229,7 @@ void run_group_blend(Recording &recording)
     blend.buffer_mode = axis::BufferMode::blending_high;
     blend.transition_mode = axis::TransitionMode::max_corner_deviation;
     blend.transition_parameter = 0.05;
-    group.submit_linear(blend);
+    (void)group.submit_linear(blend);
     for(; tick < 1500; ++tick) {
         group.cycle();
         recording.emit(tick, 0, x.snapshot());
@@ -262,7 +262,7 @@ void run_group_window(Recording &recording)
     first.acceleration = 0.004;
     first.deceleration = 0.004;
     first.jerk = 0.004;
-    group.submit_linear(first);
+    (void)group.submit_linear(first);
     std::int64_t tick = 0;
     for(; tick < 3; ++tick) {
         group.cycle();
@@ -282,7 +282,7 @@ void run_group_window(Recording &recording)
         blend.buffer_mode = axis::BufferMode::blending_high;
         blend.transition_mode = axis::TransitionMode::max_corner_deviation;
         blend.transition_parameter = 0.04;
-        group.submit_linear(blend);
+        (void)group.submit_linear(blend);
     }
     for(; tick < 4000; ++tick) {
         group.cycle();
@@ -316,7 +316,7 @@ void run_group_window_arc(Recording &recording)
     first.acceleration = 0.004;
     first.deceleration = 0.004;
     first.jerk = 0.004;
-    group.submit_linear(first);
+    (void)group.submit_linear(first);
     std::int64_t tick = 0;
     for(; tick < 3; ++tick) {
         group.cycle();
@@ -332,7 +332,7 @@ void run_group_window_arc(Recording &recording)
     arc.target.value[1] = 1.0;
     arc.buffer_mode = axis::BufferMode::blending_high;
     arc.path_choice = axis::CircPathChoice::counter_clockwise;
-    group.submit_circular(arc);
+    (void)group.submit_circular(arc);
 
     axis::GroupCommand out = first;
     out.target.value[0] = 2.0;
@@ -340,7 +340,7 @@ void run_group_window_arc(Recording &recording)
     out.buffer_mode = axis::BufferMode::blending_high;
     out.transition_mode = axis::TransitionMode::max_corner_deviation;
     out.transition_parameter = 0.02;
-    group.submit_linear(out);
+    (void)group.submit_linear(out);
 
     for(; tick < 4000; ++tick) {
         group.cycle();
@@ -365,7 +365,7 @@ void run_stream_session(Recording &recording)
     config.limits = {0.05, 0.004, 0.004, 0.004};
     config.timeout_cycles = 20;
     config.extrapolation_cycles = 30;
-    axis.stream_engage(config);
+    (void)axis.stream_engage(config);
 
     std::int64_t tick = 0;
     // Tracking phase: a 100 Hz ramp stream at 0.02 units/cycle.
@@ -406,7 +406,7 @@ void run_stream_session(Recording &recording)
     stop.kind = axis::CommandKind::stop;
     stop.deceleration = 0.004;
     stop.jerk = 0.004;
-    axis.submit(stop);
+    (void)axis.submit(stop);
     for(std::int64_t end = tick + 200; tick < end; ++tick) {
         axis.cycle();
         recording.emit(tick, 0, axis.snapshot());
@@ -441,7 +441,7 @@ void run_group_pcs(Recording &recording)
     first.acceleration = 0.004;
     first.deceleration = 0.004;
     first.jerk = 0.004;
-    group.submit_linear(first);
+    (void)group.submit_linear(first);
     std::int64_t tick = 0;
     for(; tick < 3; ++tick) {
         group.cycle();
@@ -456,7 +456,7 @@ void run_group_pcs(Recording &recording)
     blend.buffer_mode = axis::BufferMode::blending_high;
     blend.transition_mode = axis::TransitionMode::max_corner_deviation;
     blend.transition_parameter = 0.04;
-    group.submit_linear(blend);
+    (void)group.submit_linear(blend);
     for(; tick < 4000; ++tick) {
         group.cycle();
         recording.emit(tick, 0, x.snapshot());
@@ -497,7 +497,7 @@ void run_group_cartesian(Recording &recording)
     approach.deceleration = 0.004;
     approach.jerk = 0.004;
     approach.coord_system = axis::CoordSystem::mcs;
-    group.submit_linear(approach);
+    (void)group.submit_linear(approach);
     std::int64_t tick = 0;
     for(; tick < 4000; ++tick) {
         group.cycle();
@@ -515,7 +515,7 @@ void run_group_cartesian(Recording &recording)
     segment.target.value[2] = 0.3;
     segment.velocity = 0.01;
     segment.interpolation_space = axis::InterpolationSpace::cartesian;
-    group.submit_linear(segment);
+    (void)group.submit_linear(segment);
     for(; tick < 8000; ++tick) {
         group.cycle();
         recording.emit(tick, 0, j1.snapshot());
@@ -563,7 +563,7 @@ void run_group_cartesian_window(Recording &recording)
     approach.deceleration = 0.004;
     approach.jerk = 0.004;
     approach.coord_system = axis::CoordSystem::mcs;
-    group.submit_linear(approach);
+    (void)group.submit_linear(approach);
     std::int64_t tick = 0;
     for(; tick < 4000; ++tick) {
         group.cycle();
@@ -584,7 +584,7 @@ void run_group_cartesian_window(Recording &recording)
     leg.target.value[0] = pts[1][0];
     leg.target.value[1] = pts[1][1];
     leg.target.value[2] = pts[1][2];
-    group.submit_linear(leg);
+    (void)group.submit_linear(leg);
     for(int warm = 0; warm < 5; ++warm, ++tick) {
         group.cycle();
         recording.emit(tick, 0, j1.snapshot());
@@ -599,7 +599,7 @@ void run_group_cartesian_window(Recording &recording)
         blend.buffer_mode = axis::BufferMode::blending_low;
         blend.transition_mode = axis::TransitionMode::max_corner_deviation;
         blend.transition_parameter = 0.02;
-        group.submit_linear(blend);
+        (void)group.submit_linear(blend);
     }
     for(; tick < 12000; ++tick) {
         group.cycle();

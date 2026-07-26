@@ -523,7 +523,7 @@ int check_set_position()
     velocity.kind = axis::CommandKind::move_velocity;
     velocity.value = 1.0;
     velocity.velocity = 0.5;
-    axis.submit(velocity);
+    (void)axis.submit(velocity);
     axis.cycle();
 
     fb::FbSetPosition rejected;

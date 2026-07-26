@@ -1122,7 +1122,7 @@ class AxisModel
             storage.value = segments[i].target * acceleration_scale + acceleration_offset;
             storage.min_duration_cycles = static_cast<std::int64_t>(
                 std::llround(static_cast<double>(segments[i].duration_cycles) * time_scale));
-            queue_.push_back(storage);
+            (void)queue_.push_back(storage);
         }
         active_ = true;
         active_command_ = {};
@@ -2766,7 +2766,7 @@ class AxisModel
             {
                 phasing_queue_[i - 1] = phasing_queue_[i];
             }
-            phasing_queue_.pop_back();
+            (void)phasing_queue_.pop_back();
             const rt::ErrorCode started = start_phasing(next);
             if (started != rt::ErrorCode::ok)
             {
@@ -3684,7 +3684,7 @@ class AxisModel
         {
             queue_[i - 1] = queue_[i];
         }
-        queue_.pop_back();
+        (void)queue_.pop_back();
         start(next);
     }
 
@@ -3847,7 +3847,7 @@ class AxisModel
         for(std::size_t i = 1; i < management_queue_.size(); ++i) {
             management_queue_[i - 1] = management_queue_[i];
         }
-        management_queue_.pop_back();
+        (void)management_queue_.pop_back();
         execute_management(command);
     }
 
@@ -3857,9 +3857,9 @@ class AxisModel
             for(std::size_t i = 1; i < management_results_.size(); ++i) {
                 management_results_[i - 1] = management_results_[i];
             }
-            management_results_.pop_back();
+            (void)management_results_.pop_back();
         }
-        management_results_.push_back({command_id, error});
+        (void)management_results_.push_back({command_id, error});
     }
 
     // Active + full buffered queue + the independent sync/superimposed/stream

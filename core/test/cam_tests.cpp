@@ -189,7 +189,7 @@ double slave_acceleration_peak(exec::CamInterpolation interpolation)
     velocity.kind = axis::CommandKind::move_velocity;
     velocity.value = 1.0;
     velocity.velocity = 0.01;
-    master.submit(velocity);
+    (void)master.submit(velocity);
 
     double previous = 0.0;
     double before_previous = 0.0;
@@ -352,7 +352,7 @@ int check_online_switch()
     velocity.kind = axis::CommandKind::move_velocity;
     velocity.value = 1.0;
     velocity.velocity = 0.01;
-    master.submit(velocity);
+    (void)master.submit(velocity);
     for(int i = 0; i < 100; ++i) {
         master.cycle();
         slave.cycle();

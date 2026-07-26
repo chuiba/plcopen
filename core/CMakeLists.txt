@@ -22,10 +22,13 @@ set_target_properties(plcopen_core PROPERTIES EXPORT_NAME plcopen)
 
 function(plcopen_core_rt_compile_options target)
     if(MSVC)
-        target_compile_options(${target} PRIVATE /GR- /EHs-c-)
+        # /we4834: discarding a [[nodiscard]] return value is an error, so
+        # the L0 error-carrying-return contract is enforced, not decorative.
+        target_compile_options(${target} PRIVATE /GR- /EHs-c- /we4834)
         target_compile_definitions(${target} PRIVATE _HAS_EXCEPTIONS=0)
     else()
-        target_compile_options(${target} PRIVATE -fno-exceptions -fno-rtti)
+        target_compile_options(${target} PRIVATE -fno-exceptions -fno-rtti
+                                                 -Werror=unused-result)
     endif()
 endfunction()
 

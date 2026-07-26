@@ -12,7 +12,7 @@ template <typename T, std::size_t Capacity> class SpscQueue
 public:
     static_assert(Capacity > 0, "SpscQueue capacity must be positive");
 
-    bool push(const T &value)
+    [[nodiscard]] bool push(const T &value)
     {
         const std::size_t head = head_.load(std::memory_order_relaxed);
         const std::size_t next = increment(head);
@@ -25,7 +25,7 @@ public:
         return true;
     }
 
-    bool pop(T &value)
+    [[nodiscard]] bool pop(T &value)
     {
         const std::size_t tail = tail_.load(std::memory_order_relaxed);
         if(tail == head_.load(std::memory_order_acquire)) {

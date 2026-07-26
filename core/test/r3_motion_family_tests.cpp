@@ -1170,7 +1170,7 @@ int check_read_fb_all_states_coverage()
     if(!status.valid || !status.standstill) return fail("read status standstill");
 
     // Discrete motion state
-    axis.submit(make_move(axis::CommandKind::move_absolute, 10.0, 0.1));
+    (void)axis.submit(make_move(axis::CommandKind::move_absolute, 10.0, 0.1));
     axis.cycle();
     read_all();
     if(!status.valid || !status.discrete_motion) return fail("read status discrete motion");
@@ -1186,7 +1186,7 @@ int check_read_fb_all_states_coverage()
         vel_cmd.deceleration = 1.0;
         vel_cmd.jerk = 1.0;
         vel_cmd.buffer_mode = axis::BufferMode::aborting;
-        axis.submit(vel_cmd);
+        (void)axis.submit(vel_cmd);
     }
     axis.cycle();
     read_all();
@@ -1200,7 +1200,7 @@ int check_read_fb_all_states_coverage()
         stop_cmd.kind = axis::CommandKind::stop;
         stop_cmd.deceleration = 1.0;
         stop_cmd.jerk = 1.0;
-        axis.submit(stop_cmd);
+        (void)axis.submit(stop_cmd);
     }
     axis.cycle();
     read_all();

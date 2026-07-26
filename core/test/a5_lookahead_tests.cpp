@@ -143,7 +143,7 @@ int check_dense_window()
     }
 
     static Rig rig;
-    rig.group.submit_linear(make_move(zig.target_x[0], zig.target_y[0]));
+    (void)rig.group.submit_linear(make_move(zig.target_x[0], zig.target_y[0]));
     for(int i = 0; i < 5; ++i) {
         rig.group.cycle();
     }
@@ -244,7 +244,7 @@ int check_dense_window()
 int check_window_capacity()
 {
     Rig rig;
-    rig.group.submit_linear(make_move(1.0, 0.0));
+    (void)rig.group.submit_linear(make_move(1.0, 0.0));
     for(int i = 0; i < 3; ++i) {
         rig.group.cycle();
     }
@@ -290,7 +290,7 @@ int check_window_depth_config()
        rig.group.set_window_depth(4) != rt::ErrorCode::ok) {
         return fail("depth setter");
     }
-    rig.group.submit_linear(make_move(1.0, 0.0));
+    (void)rig.group.submit_linear(make_move(1.0, 0.0));
     if(rig.group.set_window_depth(8) != rt::ErrorCode::invalid_argument) {
         return fail("depth setter mid-motion");
     }
@@ -325,7 +325,7 @@ int check_window_depth_config()
 int check_reflex_inside_window()
 {
     Rig rig;
-    rig.group.submit_linear(make_move(1.0, 0.0));
+    (void)rig.group.submit_linear(make_move(1.0, 0.0));
     for(int i = 0; i < 3; ++i) {
         rig.group.cycle();
     }
@@ -353,7 +353,7 @@ int check_stop_on_window()
 {
     const Zigzag zig;
     Rig rig;
-    rig.group.submit_linear(make_move(zig.target_x[0], zig.target_y[0]));
+    (void)rig.group.submit_linear(make_move(zig.target_x[0], zig.target_y[0]));
     for(int i = 0; i < 3; ++i) {
         rig.group.cycle();
     }
@@ -416,7 +416,7 @@ int check_line_arc_line_window()
     static Rig baseline;
     int baseline_cycles = 0;
     {
-        baseline.group.submit_linear(make_move(1.0, 0.0));
+        (void)baseline.group.submit_linear(make_move(1.0, 0.0));
         baseline_cycles += run_to_standstill(baseline.group);
         axis::GroupCommand arc = make_arc_blend(1.0, 0.0, 1.0, 1.0, 1.0, true);
         arc.buffer_mode = axis::BufferMode::aborting;
@@ -424,12 +424,12 @@ int check_line_arc_line_window()
             return fail("baseline arc accepted");
         }
         baseline_cycles += run_to_standstill(baseline.group);
-        baseline.group.submit_linear(make_move(2.0, 2.5));
+        (void)baseline.group.submit_linear(make_move(2.0, 2.5));
         baseline_cycles += run_to_standstill(baseline.group);
     }
 
     static Rig rig;
-    rig.group.submit_linear(make_move(1.0, 0.0));
+    (void)rig.group.submit_linear(make_move(1.0, 0.0));
     for(int i = 0; i < 5; ++i) {
         rig.group.cycle();
     }
@@ -506,7 +506,7 @@ int check_arc_centripetal_clamp()
 {
     // Small radius: the whole arc segment is clamped to sqrt(a*R).
     static Rig rig;
-    rig.group.submit_linear(make_move(1.0, 0.0));
+    (void)rig.group.submit_linear(make_move(1.0, 0.0));
     for(int i = 0; i < 5; ++i) {
         rig.group.cycle();
     }
@@ -541,7 +541,7 @@ int check_arc_window_boundaries()
 {
     // Non-tangent arc: degrades to a buffered full-stop join, reported.
     static Rig rig;
-    rig.group.submit_linear(make_move(1.0, 0.0));
+    (void)rig.group.submit_linear(make_move(1.0, 0.0));
     for(int i = 0; i < 5; ++i) {
         rig.group.cycle();
     }
@@ -565,7 +565,7 @@ int check_arc_window_boundaries()
     // A tangent line-to-arc node consumes both the transition-geometry
     // contract and its independent transition-velocity cap.
     static Rig rig2;
-    rig2.group.submit_linear(make_move(1.0, 0.0));
+    (void)rig2.group.submit_linear(make_move(1.0, 0.0));
     for(int i = 0; i < 3; ++i) {
         rig2.group.cycle();
     }
@@ -597,7 +597,7 @@ int check_arc_window_boundaries()
 
     // Seeding a window from an active circular command is a v2 boundary.
     static Rig rig3;
-    rig3.group.submit_linear(make_move(1.0, 0.0));
+    (void)rig3.group.submit_linear(make_move(1.0, 0.0));
     for(int i = 0; i < 3; ++i) {
         rig3.group.cycle();
     }
