@@ -22,8 +22,9 @@ where to splice it into a committed path. The planner does not mutate source buf
 - `topp_jerk.h`：Layer 2（jerk-aware）——在 Layer 1 之上叠加 jerk 约束，
   正向/反向 S 曲线包络取逐点最小后做梯形时间积分；
 - `topp_executor.h`：TOPP → `Profile1D` → RT 采样的桥：把规划域求得的最优
-  时长构造成整周期 profile，并在网格点后验校核逐轴限值（不通过则回退标量
-  OTG）。
+  时长构造成整周期 profile，逐周期后验校核逐轴速度与加速度限值；不通过则
+  以统一延长时长的方式降速重解（有界轮次），预算耗尽仍不合规时返回
+  `infeasible`——返回的 profile 必为已验证。
 
 三者均为 planning-domain only，无 RT 约束（可分配、可迭代求解）；周期路径
 只消费其产出的 profile。
