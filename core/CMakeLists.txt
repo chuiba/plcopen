@@ -62,7 +62,13 @@ if(BUILD_TESTING AND PLCOPEN_BUILD_CORE_TESTS)
     target_link_libraries(plcopen_core_otg_optimality_oracle PRIVATE plcopen::core)
     plcopen_core_rt_compile_options(plcopen_core_otg_optimality_oracle)
     add_test(NAME plcopen_core_otg_optimality_oracle
-             COMMAND plcopen_core_otg_optimality_oracle --iterations 500)
+             COMMAND plcopen_core_otg_optimality_oracle --iterations 1000)
+
+    add_executable(plcopen_core_otg_fixed_time_oracle test/otg_fixed_time_oracle.cpp)
+    target_link_libraries(plcopen_core_otg_fixed_time_oracle PRIVATE plcopen::core)
+    plcopen_core_rt_compile_options(plcopen_core_otg_fixed_time_oracle)
+    add_test(NAME plcopen_core_otg_fixed_time_oracle
+             COMMAND plcopen_core_otg_fixed_time_oracle --iterations 500)
 
     add_executable(plcopen_core_otg_time_optimal_tests test/otg_time_optimal_tests.cpp)
     target_link_libraries(plcopen_core_otg_time_optimal_tests PRIVATE plcopen::core)

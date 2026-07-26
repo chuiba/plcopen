@@ -690,9 +690,43 @@ inline rt::Result<Profile1D> plan_time_optimal(State1D from, Target1D to, Limits
     Profile1D best{};
     bool have_best = false;
 
+    // Whole-profile acceptance gate (KB-099): every candidate must be
+    // limit-compliant segment by segment before it can win. Constructions
+    // whose cycle quantization degenerates (e.g. a sub-cycle jerk phase
+    // floored away leaving the chain in an inconsistent state) are discarded
+    // here instead of shipping a limit-violating profile; the always-checked
+    // baseline plan() keeps the cascade non-empty. Two documented exemptions
+    // on the velocity bound only (acceleration and jerk stay strict):
+    // an entry velocity above the limit (takeover by a tighter command)
+    // decelerates into the envelope, and the KB-055 integer-quantized
+    // acceleration-zeroing ramp reaches the deterministic intermediate
+    // velocity v0 + a0·n0/2 (n0 = ceil(|a0|/j)), which the ceil quantization
+    // can push above the limit even when the continuous optimum stays inside.
+    Limits1D gate_limits = limits;
+    if(std::fabs(from.velocity) > gate_limits.max_velocity) {
+        gate_limits.max_velocity = std::fabs(from.velocity);
+    }
+    if(from.acceleration != 0.0) {
+        const double n0 = std::ceil(std::fabs(from.acceleration) / limits.max_jerk);
+        const double reduced_v =
+            std::fabs(from.velocity + 0.5 * from.acceleration * n0);
+        if(reduced_v > gate_limits.max_velocity) {
+            gate_limits.max_velocity = reduced_v;
+        }
+    }
+    const auto profile_within_limits = [&](const Profile1D &p) {
+        for(std::size_t i = 0; i < p.segment_count(); ++i) {
+            if(!within_limits(p.segment(i), gate_limits)) {
+                return false;
+            }
+        }
+        return true;
+    };
+
     const auto consider = [&](const rt::Result<Profile1D> &candidate) {
         if(candidate && candidate.value().duration_cycles() >= 1 &&
-           (!have_best || candidate.value().duration_cycles() < best.duration_cycles())) {
+           (!have_best || candidate.value().duration_cycles() < best.duration_cycles()) &&
+           profile_within_limits(candidate.value())) {
             best = candidate.value();
             have_best = true;
         }
@@ -813,6 +847,37 @@ inline rt::Result<Profile1D> solve_fixed_time(State1D from, Target1D to,
     }
     const bool below_tmin = optimal.value().duration_cycles() > total_cycles;
 
+    // Whole-profile acceptance gate (KB-099): a fixed-time candidate must hit
+    // the exact duration AND be limit-compliant segment by segment. Applied
+    // uniformly at every strategy's return so no construction path (ramps,
+    // tramp phases, idle copies) can ship an unchecked profile. The velocity
+    // bound carries the same two exemptions as plan_time_optimal: the
+    // takeover entry magnitude and the KB-055 quantized zeroing-ramp
+    // intermediate velocity v0 + a0·n0/2.
+    Limits1D gate_limits = limits;
+    if(std::fabs(from.velocity) > gate_limits.max_velocity) {
+        gate_limits.max_velocity = std::fabs(from.velocity);
+    }
+    if(from.acceleration != 0.0) {
+        const double n0_gate = std::ceil(std::fabs(from.acceleration) / limits.max_jerk);
+        const double reduced_v =
+            std::fabs(from.velocity + 0.5 * from.acceleration * n0_gate);
+        if(reduced_v > gate_limits.max_velocity) {
+            gate_limits.max_velocity = reduced_v;
+        }
+    }
+    const auto fixed_time_ok = [&](const Profile1D &p) {
+        if(p.duration_cycles() != total_cycles) {
+            return false;
+        }
+        for(std::size_t i = 0; i < p.segment_count(); ++i) {
+            if(!within_limits(p.segment(i), gate_limits)) {
+                return false;
+            }
+        }
+        return true;
+    };
+
     // Candidate 1: single quintic spanning the full duration.
     {
         const Segment1D seg = make_quintic_segment(from, to, total_cycles);
@@ -915,7 +980,7 @@ inline rt::Result<Profile1D> solve_fixed_time(State1D from, Target1D to,
                     ok = (p.add_segment(optimal.value().segment(j)) ==
                           rt::ErrorCode::ok);
                 }
-                if(ok && p.duration_cycles() == total_cycles) {
+                if(ok && fixed_time_ok(p)) {
                     return rt::Result<Profile1D>::success(p);
                 }
             }
@@ -969,7 +1034,7 @@ inline rt::Result<Profile1D> solve_fixed_time(State1D from, Target1D to,
             return rt::Result<Profile1D>::success(p);
         };
         const rt::Result<Profile1D> inner = try_inner_quintic();
-        if(inner) {
+        if(inner && fixed_time_ok(inner.value())) {
             return inner;
         }
     }
@@ -997,7 +1062,7 @@ inline rt::Result<Profile1D> solve_fixed_time(State1D from, Target1D to,
                     make_quintic_segment(state, to, inner_cycles);
                 if(within_limits(seg, limits)) {
                     ok = (p.add_segment(seg) == rt::ErrorCode::ok);
-                    if(ok && p.duration_cycles() == total_cycles) {
+                    if(ok && fixed_time_ok(p)) {
                         return rt::Result<Profile1D>::success(p);
                     }
                 }
@@ -1047,7 +1112,7 @@ inline rt::Result<Profile1D> solve_fixed_time(State1D from, Target1D to,
                               static_cast<double>(durs[ph])) ==
                           rt::ErrorCode::ok);
                 }
-                if(ok && p.duration_cycles() == total_cycles) {
+                if(ok && fixed_time_ok(p)) {
                     return rt::Result<Profile1D>::success(p);
                 }
             }
@@ -1111,7 +1176,7 @@ inline rt::Result<Profile1D> solve_fixed_time(State1D from, Target1D to,
                                       static_cast<double>(durs[ph])) ==
                                   rt::ErrorCode::ok);
                         }
-                        if(ok && p.duration_cycles() == total_cycles) {
+                        if(ok && fixed_time_ok(p)) {
                             return rt::Result<Profile1D>::success(p);
                         }
                     }
@@ -1153,7 +1218,7 @@ inline rt::Result<Profile1D> solve_fixed_time(State1D from, Target1D to,
                    rt::ErrorCode::ok) {
                     continue;
                 }
-                if(p.duration_cycles() == total_cycles) {
+                if(fixed_time_ok(p)) {
                     return rt::Result<Profile1D>::success(p);
                 }
             }
@@ -1272,7 +1337,7 @@ inline rt::Result<Profile1D> solve_fixed_time(State1D from, Target1D to,
             }
         }
 
-        if(profile.duration_cycles() != total_cycles) {
+        if(!fixed_time_ok(profile)) {
             return rt::Result<Profile1D>::failure(rt::ErrorCode::infeasible);
         }
         return rt::Result<Profile1D>::success(profile);
