@@ -10,6 +10,7 @@
 
 #include <cstddef>
 
+#include "kin/kinematics.h" // MarginSemantics is shared by both plugin contracts
 #include "rt/error.h"
 
 namespace plcopen::core::kin
@@ -40,6 +41,13 @@ public:
                                   double *joints_out) const = 0;
 
     virtual double singularity_margin(const double *joints) const = 0;
+
+    // Capability query for the value above, same contract as the translational
+    // ABI: `none` marks an inert sentinel that L5 refuses to gate against.
+    virtual MarginSemantics margin_semantics() const
+    {
+        return MarginSemantics::angular;
+    }
 };
 
 } // namespace plcopen::core::kin

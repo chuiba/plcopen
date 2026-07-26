@@ -74,6 +74,13 @@ public:
         return 1e30; // linear mechanism: no singular configurations
     }
 
+    // The value above is a sentinel, not a measure: a linear map has no
+    // singular configurations, so there is nothing for L5 to gate.
+    MarginSemantics margin_semantics() const override
+    {
+        return MarginSemantics::none;
+    }
+
 private:
     std::size_t count_ = 0;
     double scale_[3] = {1.0, 1.0, 1.0};

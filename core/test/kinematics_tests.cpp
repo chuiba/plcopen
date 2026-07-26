@@ -42,6 +42,7 @@ public:
     int fail_forward_after = 0;
     int fail_inverse_after = 0;
     int jump_inverse_after = 0;
+    double margin = 1.0;
 
     std::size_t joint_count() const override { return joints; }
     std::size_t cartesian_count() const override { return cartesian; }
@@ -69,7 +70,7 @@ public:
         if(count > 1) q[1] = point.y;
         return rt::ErrorCode::ok;
     }
-    double singularity_margin(const double *, std::size_t) const override { return 1.0; }
+    double singularity_margin(const double *, std::size_t) const override { return margin; }
 };
 
 int check_verify_failure_contracts()
@@ -127,6 +128,13 @@ int check_verify_failure_contracts()
     if(kin::verify_kinematics(probe, ranges, 1, 1e-9, report) !=
        rt::ErrorCode::precondition_failed) {
         return fail("verify rejects walk branch jump");
+    }
+    // A declared angular margin must be a real measure at every probe state.
+    probe = VerifyProbe{};
+    probe.margin = -1.0;
+    if(kin::verify_kinematics(probe, ranges, 1, 1e-9, report) !=
+       rt::ErrorCode::out_of_range) {
+        return fail("verify rejects negative angular margin");
     }
     return 0;
 }
@@ -388,6 +396,48 @@ int check_scara_group_endpoint()
     return 0;
 }
 
+// Decision #3 capability query: a plugin whose margin is an inert sentinel
+// declares `none`, L5 refuses to gate against it at config time, and the
+// harness only exercises the field for `angular` plugins.
+int check_margin_semantics()
+{
+    const double scale[3] = {1.0, 1.0, 1.0};
+    const double offset[3] = {0.0, 0.0, 0.0};
+    const kin::CartesianGantry gantry(3, scale, offset);
+    const kin::Scara scara(0.4, 0.3, true);
+    if(gantry.margin_semantics() != kin::MarginSemantics::none ||
+       scara.margin_semantics() != kin::MarginSemantics::angular) {
+        return fail("declared margin semantics");
+    }
+
+    GroupRig rig;
+    if(rig.group.set_kinematics(&gantry, 0.05) != rt::ErrorCode::invalid_argument) {
+        return fail("sentinel plugin refuses a gate threshold");
+    }
+    if(rig.group.set_kinematics(&gantry, 0.0) != rt::ErrorCode::ok) {
+        return fail("sentinel plugin accepts no gating");
+    }
+    if(rig.group.set_kinematics(&scara, 0.05) != rt::ErrorCode::ok) {
+        return fail("angular plugin keeps its threshold");
+    }
+
+    const kin::VerifyRange annulus[3] = {{-2.5, 2.5}, {0.2, 2.9}, {-0.5, 0.5}};
+    kin::VerifyReport angular_report{};
+    if(kin::verify_kinematics(scara, annulus, 64, 1e-9, angular_report) !=
+           rt::ErrorCode::ok ||
+       !angular_report.margin_checked) {
+        return fail("harness exercises the angular margin");
+    }
+    const kin::VerifyRange linear[3] = {{-5.0, 5.0}, {-5.0, 5.0}, {-5.0, 5.0}};
+    kin::VerifyReport sentinel_report{};
+    if(kin::verify_kinematics(gantry, linear, 64, 1e-9, sentinel_report) !=
+           rt::ErrorCode::ok ||
+       sentinel_report.margin_checked) {
+        return fail("harness skips the sentinel margin");
+    }
+    return 0;
+}
+
 int check_rejections()
 {
     const kin::Scara scara(0.4, 0.3, true);
@@ -438,7 +488,7 @@ int main()
        check_scara_semantics() != 0 || check_identity_gantry_equivalence() != 0 ||
        check_scaled_gantry_oracle() != 0 || check_scara_group_endpoint() != 0 ||
        check_rejections() != 0 || check_gantry_boundaries() != 0 ||
-       check_verify_failure_contracts() != 0) {
+       check_margin_semantics() != 0 || check_verify_failure_contracts() != 0) {
         return 1;
     }
     std::printf("PASS kinematics tests\n");

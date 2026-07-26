@@ -139,6 +139,13 @@ class SerialChain final : public PoseKinematics
         return valid_ ? 1e300 : 0.0;
     }
 
+    // The value above is an inert sentinel, not an angular measure: a DH chain
+    // does have singularities, they are just classified by the solver
+    // (`singular_region`) instead of pre-checked. Declaring `none` makes L5
+    // reject an entry-ban threshold at config time rather than silently
+    // no-op it (matrix v2.1 #5).
+    MarginSemantics margin_semantics() const override { return MarginSemantics::none; }
+
   private:
     static constexpr double DifferenceStep = 1e-7;
     static constexpr double MinimumDamping = 1e-6;
