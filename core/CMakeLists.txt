@@ -594,6 +594,12 @@ if(PLCOPEN_BUILD_DEMOS)
                         ${Python3_EXECUTABLE} -m unittest tools.test_plcopen_trace -v)
             set_tests_properties(plcopen_trace_tool_tests PROPERTIES
                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+            add_test(
+                NAME plcopen_feetech_verify_tool_tests
+                COMMAND ${Python3_EXECUTABLE} -m unittest
+                        tools.test_feetech_verify -v)
+            set_tests_properties(plcopen_feetech_verify_tool_tests PROPERTIES
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
         endif()
     endif()
 endif()
