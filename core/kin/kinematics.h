@@ -21,6 +21,18 @@
 namespace plcopen::core::kin
 {
 
+// How `singularity_margin` is to be read (decision #3). `angular` means the
+// value is a real distance measure to the nearest singular configuration, in
+// radians, that L5 may gate a configured threshold against. `none` means the
+// mechanism exposes no such measure and the returned value is an inert
+// sentinel — a positive gate threshold over a `none` plugin would never bite,
+// so L5 rejects that configuration instead of silently not gating.
+enum class MarginSemantics
+{
+    angular,
+    none,
+};
+
 class Kinematics
 {
 public:
@@ -45,9 +57,17 @@ public:
 
     // Distance measure to the nearest singular configuration (decision #3):
     // strictly positive away from singularities, approaching zero at them.
-    // Mechanisms without singularities return a large constant.
+    // Read it through `margin_semantics()` — mechanisms that declare `none`
+    // return an inert sentinel rather than a measure.
     virtual double singularity_margin(const double *joints,
                                       std::size_t joint_count) const = 0;
+
+    // Capability query for the value above. Defaulted (not pure) so existing
+    // plugins stay source-compatible; only sentinel mechanisms override.
+    virtual MarginSemantics margin_semantics() const
+    {
+        return MarginSemantics::angular;
+    }
 };
 
 } // namespace plcopen::core::kin

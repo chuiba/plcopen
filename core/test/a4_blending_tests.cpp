@@ -99,17 +99,17 @@ int check_corner_blend_quality()
 
     // Baseline: identical geometry with a plain buffered join (full stop).
     Rig baseline;
-    baseline.group.submit_linear(make_slow_leg(2.0, 0.0));
+    (void)baseline.group.submit_linear(make_slow_leg(2.0, 0.0));
     axis::GroupCommand buffered = make_slow_leg(3.73205080756888, 1.0);
     buffered.buffer_mode = axis::BufferMode::buffered;
-    baseline.group.submit_linear(buffered);
+    (void)baseline.group.submit_linear(buffered);
     const int baseline_cycles = run_to_standstill(baseline.group);
     if(baseline_cycles < 0) {
         return fail("baseline chain finishes");
     }
 
     Rig rig;
-    rig.group.submit_linear(make_slow_leg(2.0, 0.0));
+    (void)rig.group.submit_linear(make_slow_leg(2.0, 0.0));
     for(int i = 0; i < 5; ++i) {
         rig.group.cycle();
     }
@@ -213,7 +213,7 @@ int check_corner_blend_quality()
 int check_transition_mode_matrix()
 {
     Rig rig;
-    rig.group.submit_linear(make_leg(2.0, 0.0));
+    (void)rig.group.submit_linear(make_leg(2.0, 0.0));
     for(int i = 0; i < 3; ++i) {
         rig.group.cycle();
     }
@@ -275,7 +275,7 @@ int check_transition_mode_matrix()
 int check_collinear_passthrough()
 {
     Rig rig;
-    rig.group.submit_linear(make_leg(1.0, 0.0));
+    (void)rig.group.submit_linear(make_leg(1.0, 0.0));
     for(int i = 0; i < 3; ++i) {
         rig.group.cycle();
     }
@@ -323,7 +323,7 @@ int check_collinear_passthrough()
 int check_reflex_degrades_to_buffered()
 {
     Rig rig;
-    rig.group.submit_linear(make_leg(1.0, 0.0));
+    (void)rig.group.submit_linear(make_leg(1.0, 0.0));
     for(int i = 0; i < 3; ++i) {
         rig.group.cycle();
     }
@@ -364,7 +364,7 @@ int check_truncation_by_segment_length()
     // Huge tolerance: the blend distance truncates to half of the shorter
     // segment and the actual deviation stays below the tolerance.
     Rig rig;
-    rig.group.submit_linear(make_leg(1.0, 0.0));
+    (void)rig.group.submit_linear(make_leg(1.0, 0.0));
     for(int i = 0; i < 3; ++i) {
         rig.group.cycle();
     }
@@ -401,7 +401,7 @@ int check_truncation_by_segment_length()
 int check_late_submission_degrades()
 {
     Rig rig;
-    rig.group.submit_linear(make_leg(1.0, 0.0));
+    (void)rig.group.submit_linear(make_leg(1.0, 0.0));
     // Run the predecessor almost to its end before submitting the blend.
     for(int i = 0; i < 20000; ++i) {
         rig.group.cycle();
@@ -434,7 +434,7 @@ int check_late_submission_degrades()
 int check_chain_boundaries()
 {
     Rig rig;
-    rig.group.submit_linear(make_leg(2.0, 0.0));
+    (void)rig.group.submit_linear(make_leg(2.0, 0.0));
     for(int i = 0; i < 3; ++i) {
         rig.group.cycle();
     }
@@ -477,7 +477,7 @@ int check_chain_boundaries()
 int check_aborting_takeover_in_transition()
 {
     Rig rig;
-    rig.group.submit_linear(make_leg(2.0, 0.0));
+    (void)rig.group.submit_linear(make_leg(2.0, 0.0));
     for(int i = 0; i < 3; ++i) {
         rig.group.cycle();
     }
@@ -522,7 +522,7 @@ int check_aborting_takeover_in_transition()
 int check_group_stop_on_chain()
 {
     Rig rig;
-    rig.group.submit_linear(make_leg(2.0, 0.0));
+    (void)rig.group.submit_linear(make_leg(2.0, 0.0));
     for(int i = 0; i < 3; ++i) {
         rig.group.cycle();
     }

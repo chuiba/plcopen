@@ -963,9 +963,9 @@ int check_management_boundaries()
     wait_fb.group_ref = &queued_rig.group;
     wait_fb.execute = true;
     wait_fb.duration = 2'000'000;
-    queued_rig.group.halt();
+    (void)queued_rig.group.halt();
     wait_fb.call();
-    queued_rig.group.halt();
+    (void)queued_rig.group.halt();
     wait_fb.call();
     if(!wait_fb.outputs.command_aborted) return fail("wait facade abort observe");
 

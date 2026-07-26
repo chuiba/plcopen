@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include <type_traits>
 
 #include "rt/cycle.h"
 #include "rt/error_diag.h"
@@ -177,6 +178,14 @@ int main()
         return fail("cycle duration boundary conversion");
     }
 
+    // The element-type fence is compile-enforced in the class body; assert
+    // the container itself stays trivial so aggregates of StaticVector keep
+    // the same guarantees.
+    static_assert(std::is_trivially_destructible_v<rt::StaticVector<int, 3>>,
+                  "StaticVector must stay trivially destructible");
+    static_assert(std::is_trivially_copyable_v<rt::StaticVector<int, 3>>,
+                  "StaticVector must stay trivially copyable");
+
     rt::StaticVector<int, 3> values;
     if(values.capacity() != 3 || !values.empty()) {
         return fail("static vector initial state");
@@ -228,8 +237,8 @@ int main()
 
     g_alloc_frozen = true;
     for(int i = 0; i < 1000; ++i) {
-        queue.push(i);
-        queue.pop(out);
+        (void)queue.push(i);
+        (void)queue.pop(out);
     }
     g_alloc_frozen = false;
     if(g_alloc_violations != 0) {

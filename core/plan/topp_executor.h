@@ -12,8 +12,11 @@
 //   4. sample_profiled_path() → RT sampling (existing infrastructure)
 //
 // The scalar Profile1D distributes time uniformly (curvature-unaware).
-// TOPP's value is the globally optimal duration — joint-limit safety
-// is verified post-hoc at grid points, with fallback to scalar OTG.
+// TOPP's value is the globally optimal duration. Joint-limit safety is
+// enforced post-hoc: per-axis velocity AND acceleration are sampled along
+// the path; on violation the profile is re-solved with a uniformly derated
+// (longer) duration until compliant, and infeasible is returned once the
+// bounded derate budget is exhausted. A returned profile is verified.
 
 #include <algorithm>
 #include <cmath>
@@ -237,8 +240,10 @@ inline otg::Limits1D effective_scalar_limits(
 }
 
 // Verify that the Profile1D trajectory respects per-axis joint limits
-// when mapped through the given path geometry.
-// Returns true if all sampled points are within tolerance.
+// (velocity and acceleration) when mapped through the given path geometry.
+// Returns true if all sampled points are within tolerance. Profiles up to
+// 4096 cycles are checked at every cycle; longer profiles fall back to the
+// num_samples stride so the check stays bounded.
 inline bool verify_joint_limits(
     const otg::Profile1D &profile,
     const geom::PathSegment &path,
@@ -251,10 +256,13 @@ inline bool verify_joint_limits(
         return true;
     }
 
-    const int step = std::max(
-        static_cast<int>(total / static_cast<std::int64_t>(num_samples)), 1);
+    const std::int64_t stride =
+        total <= 4096
+            ? 1
+            : std::max(total / static_cast<std::int64_t>(num_samples),
+                       static_cast<std::int64_t>(1));
 
-    for(std::int64_t t = 0; t <= total; t += step) {
+    for(std::int64_t t = 0; t <= total; t += stride) {
         const otg::State1D st =
             otg::sample(profile, rt::CycleTick::from_cycles(t));
         const double s = st.position;
@@ -264,14 +272,22 @@ inline bool verify_joint_limits(
             continue;
         }
 
-        const geom::Vec3 q_s = path.path_derivative(
-            std::min(s, path.length()));
+        const double s_on_path = std::min(s, path.length());
+        const geom::Vec3 q_s = path.path_derivative(s_on_path);
+        const geom::Vec3 q_ss = path.path_second_derivative(s_on_path);
         const double qs[3] = {q_s.x, q_s.y, q_s.z};
+        const double qss[3] = {q_ss.x, q_ss.y, q_ss.z};
 
         for(int i = 0; i < 3; ++i) {
             const double vi = std::fabs(qs[i] * sdot);
             if(limits[i].max_velocity > 0.0 &&
                vi > limits[i].max_velocity * tolerance) {
+                return false;
+            }
+            const double ai =
+                std::fabs(qss[i] * sdot * sdot + qs[i] * st.acceleration);
+            if(limits[i].max_acceleration > 0.0 &&
+               ai > limits[i].max_acceleration * tolerance) {
                 return false;
             }
         }
@@ -285,7 +301,52 @@ struct ToppProfileResult
     double topp_time = 0.0;
     std::int64_t quantized_cycles = 0;
     bool curvature_verified = false;
+    // Number of uniform time-derate rounds it took to pass verification
+    // (0 = the first solve was already compliant).
+    int derate_iterations = 0;
 };
+
+namespace topp_executor_detail
+{
+
+// Shared executor tail: solve the prescribed-duration scalar profile,
+// verify per-axis velocity/acceleration along the path, and on violation
+// re-solve with a uniformly derated (longer) duration. Stretching the
+// fixed-time profile scales sdot ~ 1/T and sddot ~ 1/T^2, so every
+// per-axis bound is approached monotonically and the loop terminates.
+inline rt::Result<ToppProfileResult> build_verified_profile(
+    const geom::PathSegment &path,
+    const ToppAxisLimits verify_limits[3],
+    const otg::Limits1D &scalar,
+    std::int64_t total_cycles,
+    double topp_time)
+{
+    constexpr int MaxDerate = 24;
+    const double L = path.length();
+    for(int attempt = 0; attempt <= MaxDerate; ++attempt) {
+        const auto profile = otg::solve_fixed_time(
+            {0.0, 0.0, 0.0}, {L, 0.0, 0.0}, scalar, total_cycles);
+        if(!profile) {
+            return rt::Result<ToppProfileResult>::failure(profile.error());
+        }
+        if(verify_joint_limits(profile.value(), path, verify_limits)) {
+            ToppProfileResult r{};
+            r.profile = profile.value();
+            r.topp_time = topp_time;
+            r.quantized_cycles = total_cycles;
+            r.curvature_verified = true;
+            r.derate_iterations = attempt;
+            return rt::Result<ToppProfileResult>::success(r);
+        }
+        total_cycles = std::max(
+            total_cycles + 1,
+            static_cast<std::int64_t>(
+                std::ceil(static_cast<double>(total_cycles) * 1.1)));
+    }
+    return rt::Result<ToppProfileResult>::failure(rt::ErrorCode::infeasible);
+}
+
+} // namespace topp_executor_detail
 
 // Full TOPP executor pipeline: solve TOPP → quantize → build Profile1D.
 //
@@ -330,23 +391,8 @@ inline rt::Result<ToppProfileResult> plan_topp_profiled(
         total_cycles = 1;
     }
 
-    const auto profile = otg::solve_fixed_time(
-        {0.0, 0.0, 0.0},
-        {vp.path_length, 0.0, 0.0},
-        scalar,
-        total_cycles);
-    if(!profile) {
-        return rt::Result<ToppProfileResult>::failure(profile.error());
-    }
-
-    ToppProfileResult r{};
-    r.profile = profile.value();
-    r.topp_time = vp.optimal_time;
-    r.quantized_cycles = total_cycles;
-    r.curvature_verified = verify_joint_limits(
-        r.profile, path, limits);
-
-    return rt::Result<ToppProfileResult>::success(r);
+    return topp_executor_detail::build_verified_profile(
+        path, limits, scalar, total_cycles, vp.optimal_time);
 }
 
 // Full TOPP executor pipeline with jerk-aware solver (Layer 2).
@@ -384,28 +430,13 @@ inline rt::Result<ToppProfileResult> plan_topp_profiled_jerk(
         total_cycles = 1;
     }
 
-    const auto profile = otg::solve_fixed_time(
-        {0.0, 0.0, 0.0},
-        {L, 0.0, 0.0},
-        scalar,
-        total_cycles);
-    if(!profile) {
-        return rt::Result<ToppProfileResult>::failure(profile.error());
-    }
-
     ToppAxisLimits verify_limits[3];
     for(int i = 0; i < 3; ++i) {
         verify_limits[i] = {limits[i].max_velocity, limits[i].max_acceleration};
     }
 
-    ToppProfileResult r{};
-    r.profile = profile.value();
-    r.topp_time = T;
-    r.quantized_cycles = total_cycles;
-    r.curvature_verified = verify_joint_limits(
-        r.profile, path, verify_limits);
-
-    return rt::Result<ToppProfileResult>::success(r);
+    return topp_executor_detail::build_verified_profile(
+        path, verify_limits, scalar, total_cycles, T);
 }
 
 } // namespace plcopen::core::plan

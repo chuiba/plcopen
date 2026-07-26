@@ -10,17 +10,30 @@ It has no PLCopen semantics; the group integration lives in L5.
 v1 scope (BS3.2-BS3.4):
 
 - `Kinematics` header-file ABI (`kinematics.h`): forward / inverse /
-  singularity_margin; seed-branch inverse semantics (no implicit branch
-  flips); RT-safe contract — no allocation, no exceptions, bounded
-  iteration, out-of-budget reports `infeasible`;
+  singularity_margin / margin_semantics; seed-branch inverse semantics (no
+  implicit branch flips); RT-safe contract — no allocation, no exceptions,
+  bounded iteration, out-of-budget reports `infeasible`;
 - reference mechanisms: `CartesianGantry` (per-axis linear map,
   singularity-free) and `Scara` (planar 2R + optional Z, closed-form
   inverse, elbow branch from the seed, revolute continuity against the
   atan2 branch cut, angular singularity margin);
 - conformance harness (`verify.h`): round-trip fuzz
   (inverse(forward(q), seed=q) == q), seed-branch stability along
-  continuous walks, deterministic LCG — every plugin, reference or
-  third-party, runs the same harness.
+  continuous walks, an angular-margin sanity probe (finite and non-negative
+  at every probe state, `out_of_range` otherwise; skipped and reported as
+  skipped via `VerifyReport::margin_checked` for sentinel plugins),
+  deterministic LCG — every plugin, reference or third-party, runs the same
+  harness.
+
+Margin semantics (KB-102): `singularity_margin` is only a distance measure
+when the plugin declares `MarginSemantics::angular` (the default, so existing
+plugins stay source-compatible). `CartesianGantry` and `SerialChain` return
+large constants that are inert sentinels, not measures, and declare
+`MarginSemantics::none`; the L5 seams (`set_kinematics`,
+`set_pose_kinematics`, `validate_kinematics`) reject a positive
+`min_singularity_margin` over such a plugin at config time rather than
+carrying a gate that can never bite. The cycle path is unchanged — the
+default threshold of 0.0 gates nothing.
 
 BS3.5 (`wrist6r.h`): the spherical-wrist 6R analytic inverse ships in
 pre-integration form — full 6-DOF poses do not fit the v1 ABI (2/3
@@ -73,5 +86,6 @@ v1 declared boundaries:
   Cartesian sweeps cross the wrist singularity without errorstop;
 - analytic-plugin singularity handling remains the entry-ban pre-check
   (margin threshold at submit); H2 numerical chains instead use adaptive
-  damping plus convergence/error classification and return a large positive
-  entry margin.
+  damping plus convergence/error classification and expose no entry margin
+  (`MarginSemantics::none`, so a threshold is refused at config time — a DH
+  chain does have singularities, they are just classified by the solver).

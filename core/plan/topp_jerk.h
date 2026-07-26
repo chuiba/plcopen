@@ -29,6 +29,18 @@ struct ToppJerkAxisLimits
     double max_jerk = 0.0;
 };
 
+// Merged forward/backward envelope grid, exposed for oracle-side compliance
+// measurement (KB-098): the pointwise-min merge has an sdot-squared slope
+// discontinuity at the fwd/dec switch index, so the implied jerk there is
+// unbounded and the integrated time is an optimistic lower bound.
+struct ToppJerkProfile
+{
+    static constexpr int MaxGrid = 1024;
+    double x[MaxGrid] = {};
+    int grid_points = 0;
+    double ds = 0.0;
+};
+
 namespace topp_jerk_detail
 {
 
@@ -146,8 +158,12 @@ inline StartupResult scurve_startup(double ds, double j_eff, double a_eff)
 
 inline rt::Result<ToppResult> solve_topp_ra_jerk(const geom::PathSegment &path,
                                                   const ToppJerkAxisLimits limits[3],
-                                                  int grid_size)
+                                                  int grid_size,
+                                                  ToppJerkProfile *merged_out = nullptr)
 {
+    if(merged_out != nullptr) {
+        *merged_out = ToppJerkProfile{};
+    }
     if(grid_size < 2) {
         return rt::Result<ToppResult>::failure(rt::ErrorCode::invalid_argument);
     }
@@ -307,6 +323,13 @@ inline rt::Result<ToppResult> solve_topp_ra_jerk(const geom::PathSegment &path,
     }
 
     // Time integration using pointwise min of forward and backward profiles.
+    if(merged_out != nullptr) {
+        for(int k = 0; k <= N; ++k) {
+            merged_out->x[k] = std::min(x_fwd[k], x_dec[k]);
+        }
+        merged_out->grid_points = N + 1;
+        merged_out->ds = ds;
+    }
     double total_time = 0.0;
     for(int k = 0; k < N; ++k) {
         const double x_k = std::min(x_fwd[k], x_dec[k]);

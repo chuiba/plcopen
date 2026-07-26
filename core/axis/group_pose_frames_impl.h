@@ -67,6 +67,12 @@ inline rt::ErrorCode AxisGroup::set_pose_kinematics(const kin::PoseKinematics *p
                              plugin->joint_count() != 6)) {
         return rt::ErrorCode::invalid_argument;
     }
+    // An entry-ban threshold over a plugin whose margin is an inert sentinel
+    // would never bite; refuse the configuration instead of not gating.
+    if(plugin != nullptr && min_singularity_margin > 0.0 &&
+       plugin->margin_semantics() == kin::MarginSemantics::none) {
+        return rt::ErrorCode::invalid_argument;
+    }
     pose_frames_.pose_kinematics_ = plugin;
     pose_frames_.pose_min_margin_ = min_singularity_margin;
     pose_frames_.pose_max_joint_step_ = max_joint_step;
@@ -210,6 +216,11 @@ inline rt::ErrorCode AxisGroup::set_kinematics(const kin::Kinematics *plugin,
        (pose_frames_.pose_kinematics_ != nullptr || plugin->joint_count() != axes_.size() ||
         plugin->cartesian_count() != plugin->joint_count() ||
         plugin->cartesian_count() < 2 || plugin->cartesian_count() > 3)) {
+        return rt::ErrorCode::invalid_argument;
+    }
+    // See set_pose_kinematics: no gating threshold over a sentinel margin.
+    if(plugin != nullptr && min_singularity_margin > 0.0 &&
+       plugin->margin_semantics() == kin::MarginSemantics::none) {
         return rt::ErrorCode::invalid_argument;
     }
     pose_frames_.kinematics_ = plugin;
@@ -447,6 +458,11 @@ inline rt::ErrorCode AxisGroup::validate_kinematics(const KinTransformRef &trans
            transform.pose->joint_count() != 6) {
             return rt::ErrorCode::invalid_argument;
         }
+        // Same capability gate as set_pose_kinematics.
+        if(min_singularity_margin > 0.0 &&
+           transform.pose->margin_semantics() == kin::MarginSemantics::none) {
+            return rt::ErrorCode::invalid_argument;
+        }
         return rt::ErrorCode::ok;
     case KinTransformKind::kinematics:
         if(transform.kinematics == nullptr || transform.pose != nullptr ||
@@ -455,6 +471,11 @@ inline rt::ErrorCode AxisGroup::validate_kinematics(const KinTransformRef &trans
                transform.kinematics->joint_count() ||
            transform.kinematics->cartesian_count() < 2 ||
            transform.kinematics->cartesian_count() > 3) {
+            return rt::ErrorCode::invalid_argument;
+        }
+        // Same capability gate as set_kinematics.
+        if(min_singularity_margin > 0.0 &&
+           transform.kinematics->margin_semantics() == kin::MarginSemantics::none) {
             return rt::ErrorCode::invalid_argument;
         }
         return rt::ErrorCode::ok;

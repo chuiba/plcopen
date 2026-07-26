@@ -1551,7 +1551,7 @@ class PassiveHomingFb
              std::fabs(snapshot.actual_position - start_position_) > distance_limit))
         {
             fail(rt::ErrorCode::out_of_range);
-            axis_ref->abort_passive_homing();
+            (void)axis_ref->abort_passive_homing();
             owner_id_ = 0;
             return;
         }
@@ -1637,7 +1637,7 @@ class FbStepReferenceFlyingSwitch : public PassiveHomingFb
              switch_mode == axis::SwitchMode::edge_negative) &&
             actual_velocity == 0.0)
         {
-            axis_ref->abort_passive_homing();
+            (void)axis_ref->abort_passive_homing();
             owner_id_ = 0;
             fail(rt::ErrorCode::precondition_failed);
             return;

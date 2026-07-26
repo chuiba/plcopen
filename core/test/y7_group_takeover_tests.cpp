@@ -176,7 +176,7 @@ int run_to_standstill(axis::AxisGroup &group, int limit = 50000)
 int check_velocity_continuity()
 {
     Rig rig;
-    rig.group.submit_linear(make_cmd(2.0, 0.0));
+    (void)rig.group.submit_linear(make_cmd(2.0, 0.0));
 
     // Run until mid-motion (into the cruise phase; the total motion is
     // ~111 cycles with these dynamics).
@@ -1170,7 +1170,7 @@ int check_cartesian_source_circular_scope_gates()
 int check_forward_succession()
 {
     Rig rig;
-    rig.group.submit_linear(make_cmd(2.0, 0.0));
+    (void)rig.group.submit_linear(make_cmd(2.0, 0.0));
 
     // Run until cruising (~11 cycles to accelerate, then cruise).
     for(int i = 0; i < 50; ++i) {
@@ -1222,7 +1222,7 @@ int check_forward_succession()
 int check_tolerance_tube()
 {
     Rig rig;
-    rig.group.submit_linear(make_cmd(2.0, 0.0));
+    (void)rig.group.submit_linear(make_cmd(2.0, 0.0));
 
     for(int i = 0; i < 50; ++i) {
         rig.group.cycle();
@@ -1300,7 +1300,7 @@ int check_tolerance_tube()
 int check_no_limit_exceedance()
 {
     Rig rig;
-    rig.group.submit_linear(make_cmd(2.0, 0.0));
+    (void)rig.group.submit_linear(make_cmd(2.0, 0.0));
 
     for(int i = 0; i < 50; ++i) {
         rig.group.cycle();
@@ -1375,7 +1375,7 @@ int check_no_limit_exceedance()
 int check_aligned_takeover()
 {
     Rig rig;
-    rig.group.submit_linear(make_cmd(2.0, 0.0));
+    (void)rig.group.submit_linear(make_cmd(2.0, 0.0));
 
     for(int i = 0; i < 50; ++i) {
         rig.group.cycle();
@@ -1436,7 +1436,7 @@ int check_stationary_takeover()
 int check_reentrant_takeover()
 {
     Rig rig;
-    rig.group.submit_linear(make_cmd(2.0, 0.0));
+    (void)rig.group.submit_linear(make_cmd(2.0, 0.0));
 
     for(int i = 0; i < 50; ++i) {
         rig.group.cycle();
@@ -1519,7 +1519,7 @@ int check_reentrant_takeover()
 int check_negative_projection()
 {
     Rig rig;
-    rig.group.submit_linear(make_cmd(2.0, 0.0));
+    (void)rig.group.submit_linear(make_cmd(2.0, 0.0));
 
     for(int i = 0; i < 50; ++i) {
         rig.group.cycle();
@@ -1581,7 +1581,7 @@ int check_negative_projection()
 int check_zero_distance_takeover()
 {
     Rig rig;
-    rig.group.submit_linear(make_cmd(2.0, 0.0));
+    (void)rig.group.submit_linear(make_cmd(2.0, 0.0));
 
     for(int i = 0; i < 50; ++i) {
         rig.group.cycle();
@@ -1612,7 +1612,7 @@ int check_zero_distance_takeover()
 int check_acceleration_phase_takeover()
 {
     Rig rig;
-    rig.group.submit_linear(make_cmd(2.0, 0.0));
+    (void)rig.group.submit_linear(make_cmd(2.0, 0.0));
 
     // Only 5 cycles — deep in the acceleration phase where a != 0.
     for(int i = 0; i < 5; ++i) {
@@ -1680,7 +1680,7 @@ int check_kb053_stop_distance_rejection()
     fast_cmd.acceleration = 0.004;
     fast_cmd.deceleration = 0.004;
     fast_cmd.jerk = 0.004;
-    rig.group.submit_linear(fast_cmd);
+    (void)rig.group.submit_linear(fast_cmd);
 
     // Run into cruise phase at full velocity.
     for(int i = 0; i < 100; ++i) {
@@ -1703,7 +1703,7 @@ int check_kb053_stop_distance_rejection()
     tiny_abort.deceleration = 0.004;
     tiny_abort.jerk = 0.004;
     tiny_abort.buffer_mode = axis::BufferMode::aborting;
-    rig.group.submit_linear(tiny_abort);
+    (void)rig.group.submit_linear(tiny_abort);
 
     // Whether the connector is active or not (KB-053 may fall back to
     // rest-start), the motion should complete without crashing.
@@ -1717,7 +1717,7 @@ int check_kb053_stop_distance_rejection()
 int check_stop_during_connector()
 {
     Rig rig;
-    rig.group.submit_linear(make_cmd(2.0, 0.0));
+    (void)rig.group.submit_linear(make_cmd(2.0, 0.0));
 
     for(int i = 0; i < 50; ++i) {
         rig.group.cycle();

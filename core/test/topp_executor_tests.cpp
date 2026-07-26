@@ -291,7 +291,7 @@ int check_velocity_profile_storage()
     return 0;
 }
 
-// G: arc curvature verification — line passes, arc with tight limits may warn.
+// G: arc curvature verification — a returned profile must be verified.
 int check_arc_curvature_verification()
 {
     const auto arc = geom::make_arc(
@@ -308,11 +308,129 @@ int check_arc_curvature_verification()
     if(!result) {
         return fail("arc_curvature: solve failed");
     }
+    if(!result.value().curvature_verified) {
+        return fail("arc_curvature: returned profile not verified");
+    }
 
     std::printf("PASS arc_curvature (verified=%s, T_topp=%.3f, cycles=%lld)\n",
                 result.value().curvature_verified ? "true" : "false",
                 result.value().topp_time,
                 static_cast<long long>(result.value().quantized_cycles));
+    return 0;
+}
+
+// Resample a returned profile at every cycle and check per-axis velocity
+// and acceleration against the limits through the path geometry.
+int assert_profile_axis_compliance(const plan::ToppProfileResult &r,
+                                   const geom::PathSegment &path,
+                                   const plan::ToppAxisLimits limits[3],
+                                   const char *name)
+{
+    for(std::int64_t t = 0; t <= r.quantized_cycles; ++t) {
+        const otg::State1D st =
+            otg::sample(r.profile, rt::CycleTick::from_cycles(t));
+        const double s = std::min(std::max(st.position, 0.0), path.length());
+        const geom::Vec3 q_s = path.path_derivative(s);
+        const geom::Vec3 q_ss = path.path_second_derivative(s);
+        const double qs[3] = {q_s.x, q_s.y, q_s.z};
+        const double qss[3] = {q_ss.x, q_ss.y, q_ss.z};
+        for(int i = 0; i < 3; ++i) {
+            const double vi = std::fabs(qs[i] * st.velocity);
+            const double ai = std::fabs(
+                qss[i] * st.velocity * st.velocity + qs[i] * st.acceleration);
+            if(limits[i].max_velocity > 0.0 &&
+               vi > limits[i].max_velocity * 1.011) {
+                std::printf("  %s: axis %d velocity %.6f > limit %.6f at t=%lld\n",
+                            name, i, vi, limits[i].max_velocity,
+                            static_cast<long long>(t));
+                return 1;
+            }
+            if(limits[i].max_acceleration > 0.0 &&
+               ai > limits[i].max_acceleration * 1.011) {
+                std::printf("  %s: axis %d accel %.6f > limit %.6f at t=%lld\n",
+                            name, i, ai, limits[i].max_acceleration,
+                            static_cast<long long>(t));
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+// H: tight arcs must come back per-axis acceleration-compliant — this is
+// the case where the curvature-unaware scalar profile used to overshoot
+// per-axis acceleration by up to ~1.9x while still reporting verified.
+int check_arc_acceleration_bounded()
+{
+    const auto arc = geom::make_arc(
+        {20.0, 0.0, 0.0}, {0.0, 20.0, 0.0}, {-20.0, 0.0, 0.0});
+    if(!arc) {
+        return fail("arc_accel: make_arc failed");
+    }
+    const geom::PathSegment path = geom::as_path_segment(arc.value());
+
+    const plan::ToppAxisLimits limits[3] = {
+        {10.0, 2.0}, {10.0, 2.0}, {10.0, 2.0}};
+
+    const auto result = plan::plan_topp_profiled(path, limits);
+    if(!result) {
+        return fail("arc_accel: solve failed");
+    }
+    const auto &r = result.value();
+    if(!r.curvature_verified) {
+        return fail("arc_accel: returned profile not verified");
+    }
+    if(assert_profile_axis_compliance(r, path, limits, "arc_accel") != 0) {
+        return fail("arc_accel: per-axis limit violated");
+    }
+
+    std::printf("PASS arc_accel (cycles=%lld, derates=%d)\n",
+                static_cast<long long>(r.quantized_cycles),
+                r.derate_iterations);
+    return 0;
+}
+
+// I: the derate loop engages on curvature-bound arcs and stays out of the
+// way on straight lines.
+int check_derate_replan()
+{
+    const auto arc = geom::make_arc(
+        {20.0, 0.0, 0.0}, {0.0, 20.0, 0.0}, {-20.0, 0.0, 0.0});
+    if(!arc) {
+        return fail("derate: make_arc failed");
+    }
+    const geom::PathSegment arc_path = geom::as_path_segment(arc.value());
+    const plan::ToppAxisLimits limits[3] = {
+        {10.0, 2.0}, {10.0, 2.0}, {10.0, 2.0}};
+
+    const auto arc_result = plan::plan_topp_profiled(arc_path, limits);
+    if(!arc_result) {
+        return fail("derate: arc solve failed");
+    }
+    if(arc_result.value().derate_iterations <= 0) {
+        return fail("derate: tight arc did not trigger derate replanning");
+    }
+    if(static_cast<double>(arc_result.value().quantized_cycles) <=
+       arc_result.value().topp_time) {
+        return fail("derate: derated duration not above TOPP time");
+    }
+
+    const auto line = geom::make_line({0.0, 0.0, 0.0}, {5.0, 0.0, 0.0});
+    if(!line) {
+        return fail("derate: make_line failed");
+    }
+    const auto line_result = plan::plan_topp_profiled(
+        geom::as_path_segment(line.value()), limits);
+    if(!line_result) {
+        return fail("derate: line solve failed");
+    }
+    if(line_result.value().derate_iterations != 0) {
+        return fail("derate: straight line unexpectedly derated");
+    }
+
+    std::printf("PASS derate_replan (arc derates=%d, line derates=%d)\n",
+                arc_result.value().derate_iterations,
+                line_result.value().derate_iterations);
     return 0;
 }
 
@@ -393,6 +511,8 @@ int main()
     failures += check_jerk_aware_pipeline();
     failures += check_velocity_profile_storage();
     failures += check_arc_curvature_verification();
+    failures += check_arc_acceleration_bounded();
+    failures += check_derate_replan();
     failures += check_public_boundaries();
 
     std::printf("\n=== %d failures ===\n", failures);

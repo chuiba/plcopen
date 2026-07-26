@@ -99,13 +99,13 @@ int main(int argc, char **argv)
         move.acceleration = 0.001;
         move.deceleration = 0.001;
         move.jerk = 0.001;
-        master.submit(move);
-        master.submit_superimposed(1.0e12, 0.0005, 0.001, 0.001, 0.001);
-        master.arm_touch_probe(0, false, 0.0, 0.0);
+        (void)master.submit(move);
+        (void)master.submit_superimposed(1.0e12, 0.0005, 0.001, 0.001, 0.001);
+        (void)master.arm_touch_probe(0, false, 0.0, 0.0);
         axis::GearInCommand gear{};
         gear.master = &master;
         gear.ratio_numerator = 2.0;
-        slave.gear_in(gear);
+        (void)slave.gear_in(gear);
     }
 
     // Group with a blended look-ahead window ending in a long circular arc:
@@ -126,7 +126,7 @@ int main(int argc, char **argv)
         first.acceleration = 0.00002;
         first.deceleration = 0.00002;
         first.jerk = 0.00002;
-        group.submit_linear(first);
+        (void)group.submit_linear(first);
         for (int i = 0; i < 5; ++i)
         {
             group.cycle();
@@ -156,7 +156,7 @@ int main(int argc, char **argv)
         approach.target.size = 2;
         approach.target.value[0] = 1.0;
         approach.velocity = 0.5;
-        circle_group.submit_linear(approach);
+        (void)circle_group.submit_linear(approach);
         for (int i = 0; i < 100 && circle_group.status() != axis::GroupStatus::standby; ++i)
         {
             circle_group.cycle();

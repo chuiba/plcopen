@@ -144,7 +144,7 @@ int check_group_home_aborts_moving()
     cmd.acceleration = 0.5;
     cmd.deceleration = 0.5;
     cmd.jerk = 0.5;
-    group.submit_linear(cmd);
+    (void)group.submit_linear(cmd);
 
     fb::FbGroupHome home;
     home.group_ref = &group;
@@ -906,7 +906,7 @@ int check_group_override_realtime_replan()
     cmd.acceleration = 0.5;
     cmd.deceleration = 0.5;
     cmd.jerk = 0.5;
-    group.submit_linear(cmd);
+    (void)group.submit_linear(cmd);
 
     for(int i = 0; i < 50; ++i) {
         group.cycle();
@@ -955,7 +955,7 @@ int check_group_override_factor_zero_equivalent()
     cmd.acceleration = 0.5;
     cmd.deceleration = 0.5;
     cmd.jerk = 0.5;
-    group.submit_linear(cmd);
+    (void)group.submit_linear(cmd);
 
     for(int i = 0; i < 20; ++i) {
         group.cycle();
@@ -1025,7 +1025,7 @@ int check_interrupt_continue_basic()
     cmd.acceleration = 0.01;
     cmd.deceleration = 0.01;
     cmd.jerk = 0.005;
-    group.submit_linear(cmd);
+    (void)group.submit_linear(cmd);
 
     for(int i = 0; i < 100; ++i) {
         group.cycle();
@@ -1447,7 +1447,7 @@ int check_interrupted_accepts_aborting()
     cmd.acceleration = 0.01;
     cmd.deceleration = 0.01;
     cmd.jerk = 0.005;
-    group.submit_linear(cmd);
+    (void)group.submit_linear(cmd);
 
     for(int i = 0; i < 100; ++i) {
         group.cycle();
@@ -1512,7 +1512,7 @@ int check_interrupted_rejects_buffered()
     cmd.acceleration = 0.01;
     cmd.deceleration = 0.01;
     cmd.jerk = 0.005;
-    group.submit_linear(cmd);
+    (void)group.submit_linear(cmd);
 
     for(int i = 0; i < 100; ++i) {
         group.cycle();
@@ -1587,7 +1587,7 @@ int check_read_status_interrupted()
     cmd.acceleration = 0.01;
     cmd.deceleration = 0.01;
     cmd.jerk = 0.005;
-    group.submit_linear(cmd);
+    (void)group.submit_linear(cmd);
 
     for(int i = 0; i < 100; ++i) {
         group.cycle();

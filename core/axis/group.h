@@ -1180,7 +1180,7 @@ public:
         }
         const rt::ErrorCode ident_pushed = member_idents_.push_back(ident);
         if(ident_pushed != rt::ErrorCode::ok) {
-            axes_.pop_back();
+            (void)axes_.pop_back();
             return ident_pushed;
         }
         axis.set_group_owner(this, &status_);
@@ -1210,8 +1210,8 @@ public:
             axes_[i - 1] = axes_[i];
             member_idents_[i - 1] = member_idents_[i];
         }
-        axes_.pop_back();
-        member_idents_.pop_back();
+        (void)axes_.pop_back();
+        (void)member_idents_.pop_back();
         axis->set_group_owner(nullptr);
         return rt::ErrorCode::ok;
     }
@@ -1229,8 +1229,8 @@ public:
             axes_[i - 1] = axes_[i];
             member_idents_[i - 1] = member_idents_[i];
         }
-        axes_.pop_back();
-        member_idents_.pop_back();
+        (void)axes_.pop_back();
+        (void)member_idents_.pop_back();
         axis.set_group_owner(nullptr);
         return rt::ErrorCode::ok;
     }
@@ -3145,9 +3145,9 @@ private:
             for(std::size_t i = 1; i < management_results_.size(); ++i) {
                 management_results_[i - 1] = management_results_[i];
             }
-            management_results_.pop_back();
+            (void)management_results_.pop_back();
         }
-        management_results_.push_back({command_id, error});
+        (void)management_results_.push_back({command_id, error});
     }
 
     void remember_management_aborted(std::uint32_t command_id)
@@ -3157,9 +3157,9 @@ private:
             for(std::size_t i = 1; i < aborted_management_ids_.size(); ++i) {
                 aborted_management_ids_[i - 1] = aborted_management_ids_[i];
             }
-            aborted_management_ids_.pop_back();
+            (void)aborted_management_ids_.pop_back();
         }
-        aborted_management_ids_.push_back(command_id);
+        (void)aborted_management_ids_.push_back(command_id);
     }
 
     bool command_queued(std::uint32_t command_id) const
@@ -4368,7 +4368,7 @@ private:
         for(std::size_t i = 1; i < queue_.size(); ++i) {
             queue_[i - 1] = queue_[i];
         }
-        queue_.pop_back();
+        (void)queue_.pop_back();
         if(next.kind == GroupCommandKind::motion) {
             start(next);
         } else if(next.kind == GroupCommandKind::direct) {

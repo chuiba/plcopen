@@ -159,14 +159,651 @@ int check_axis_queue_matrix()
                 static_cast<axis::CommandKind>(scenario % 7),
                 static_cast<axis::BufferMode>(1 + (index % 3)));
             queued.value = (index % 2 == 0 ? 1.0 : -1.0) * (index + 1) * 0.1;
-            model.submit(queued);
+            (void)model.submit(queued);
         }
         for(int cycle = 0; cycle < 256; ++cycle) {
             model.cycle();
             if(!finite(model.snapshot())) return fail("axis queue finite");
         }
-        model.submit(command(axis::CommandKind::halt, axis::BufferMode::aborting));
+        (void)model.submit(command(axis::CommandKind::halt, axis::BufferMode::aborting));
         for(int cycle = 0; cycle < 64; ++cycle) model.cycle();
+    }
+    return 0;
+}
+
+// --- B11: axis submit admissibility matrix -------------------------------
+// The expected column below is transcribed from core/axis/state.h in
+// FIRST-MATCH order. Every guard returns a different error code, so the
+// order itself is part of the contract:
+//
+//   AxisModel::submit_admissibility() -- the pure prefix
+//   A  ~1311  unpowered / errorstop / buffer mode outside the enum /
+//             non-finite command / out-of-range kinematic limits
+//                                                  -> invalid_argument
+//   B  ~1323  torque with a non-aborting takeover   -> unsupported
+//   C  ~1328  stop lock held and the command is not a stop
+//                                                  -> precondition_failed
+//   D  ~1332  absolute kind with a Direction outside the enum
+//                                                  -> invalid_argument
+//   E  ~1342  sync engaged or stream session, non-aborting
+//                                                  -> invalid_argument
+//   F  ~1347  continuous kind with a zero end velocity -> unsupported
+//   G  ~1355  command drives into a disabled feed   -> precondition_failed
+//
+//   AxisModel::submit_impl() -- behind the command-id allocation
+//   H  ~1395  acceleration profile active, non-aborting -> unsupported
+//   I  ~1431  absolute target outside the soft limits   -> out_of_range
+//
+// Both halves are asserted here so the seam cannot drift. Note the
+// precedence rows: torque returns successfully just before H, so an
+// aborting torque takeover of an acceleration profile stays admissible.
+
+enum class Precondition
+{
+    clean,
+    unpowered,
+    errorstop,
+    stop_locked,
+    sync_engaged,
+    stream_active,
+    accel_profile_active,
+};
+
+// Command mutations (plus the axis configuration they need) that isolate one
+// guard. Tweak::none leaves the shared command() template untouched.
+enum class Tweak
+{
+    none,
+    invalid_buffer_mode,
+    nan_target,
+    zero_velocity,
+    torque_zero_velocity,
+    torque_negative_velocity,
+    torque_shortest_way,
+    invalid_direction,
+    shortest_way_direction,
+    zero_end_velocity,
+    forward_no_negative_feed,
+    reverse_no_negative_feed,
+    reverse_both_feeds,
+    target_outside_limits,
+    target_inside_limits,
+};
+
+struct SubmitRig
+{
+    axis::AxisModel master;
+    axis::AxisModel axis;
+};
+
+const char *error_name(rt::ErrorCode code)
+{
+    switch(code) {
+    case rt::ErrorCode::ok: return "ok";
+    case rt::ErrorCode::invalid_argument: return "invalid_argument";
+    case rt::ErrorCode::out_of_range: return "out_of_range";
+    case rt::ErrorCode::capacity_exceeded: return "capacity_exceeded";
+    case rt::ErrorCode::infeasible: return "infeasible";
+    case rt::ErrorCode::precondition_failed: return "precondition_failed";
+    case rt::ErrorCode::unsupported: return "unsupported";
+    default: return "other";
+    }
+}
+
+bool setup(Precondition precondition, SubmitRig &rig)
+{
+    if(precondition == Precondition::unpowered) {
+        return !rig.axis.snapshot().powered;
+    }
+    if(rig.axis.set_power(true) != rt::ErrorCode::ok) return false;
+    switch(precondition) {
+    case Precondition::clean:
+        return rig.axis.snapshot().status == axis::AxisStatus::standstill;
+    case Precondition::errorstop:
+        (void)rig.axis.trigger_error();
+        return rig.axis.snapshot().status == axis::AxisStatus::errorstop;
+    case Precondition::stop_locked: {
+        axis::AxisCommand lock = command(axis::CommandKind::stop, axis::BufferMode::aborting);
+        lock.lock_stopping = true;
+        // No cycle() afterwards: the lock is released by stop completion.
+        return static_cast<bool>(rig.axis.submit(lock));
+    }
+    case Precondition::sync_engaged: {
+        if(rig.master.set_power(true) != rt::ErrorCode::ok) return false;
+        axis::GearInCommand gear{};
+        gear.master = &rig.master;
+        gear.buffer_mode = axis::BufferMode::aborting;
+        return static_cast<bool>(rig.axis.gear_in(gear)) &&
+               rig.axis.sync_phase() != axis::SyncPhase::idle;
+    }
+    case Precondition::stream_active: {
+        stream::StreamFilterConfig config{};
+        config.limits = {0.2, 0.05, 0.05, 0.01};
+        config.timeout_cycles = 4;
+        return static_cast<bool>(rig.axis.stream_engage(config)) &&
+               rig.axis.stream_session_id() != 0;
+    }
+    case Precondition::accel_profile_active: {
+        axis::ProfileSegment segment{};
+        segment.target = 0.05;
+        segment.duration_cycles = 40;
+        return static_cast<bool>(
+                   rig.axis.submit_acceleration_profile(&segment, 1, 1.0, 0.0, 1.0)) &&
+               rig.axis.snapshot().status == axis::AxisStatus::continuous_motion;
+    }
+    case Precondition::unpowered:
+        break;
+    }
+    return false;
+}
+
+bool configure_soft_limits(axis::AxisModel &model)
+{
+    return model.write_bool_parameter(axis::AxisParameter::enable_limit_pos, true) ==
+               rt::ErrorCode::ok &&
+           model.write_bool_parameter(axis::AxisParameter::enable_limit_neg, true) ==
+               rt::ErrorCode::ok &&
+           model.write_parameter(axis::AxisParameter::sw_limit_pos, 10.0) ==
+               rt::ErrorCode::ok &&
+           model.write_parameter(axis::AxisParameter::sw_limit_neg, -10.0) ==
+               rt::ErrorCode::ok;
+}
+
+bool apply_tweak(SubmitRig &rig, axis::AxisCommand &value, Tweak tweak)
+{
+    switch(tweak) {
+    case Tweak::none:
+        return true;
+    case Tweak::invalid_buffer_mode:
+        value.buffer_mode = static_cast<axis::BufferMode>(9);
+        return true;
+    case Tweak::nan_target:
+        value.value = std::numeric_limits<double>::quiet_NaN();
+        return true;
+    case Tweak::zero_velocity:
+    case Tweak::torque_zero_velocity:
+        value.velocity = 0.0;
+        return true;
+    case Tweak::torque_negative_velocity:
+        value.velocity = -1.0;
+        return true;
+    case Tweak::torque_shortest_way:
+    case Tweak::shortest_way_direction:
+        value.direction = axis::Direction::shortest_way;
+        return true;
+    case Tweak::invalid_direction:
+        value.direction = static_cast<axis::Direction>(9);
+        return true;
+    case Tweak::zero_end_velocity:
+        value.end_velocity = 0.0;
+        return true;
+    case Tweak::forward_no_negative_feed:
+        value.value = 1.0;
+        return rig.axis.set_power(true, true, false) == rt::ErrorCode::ok;
+    case Tweak::reverse_no_negative_feed:
+        value.value = -1.0;
+        return rig.axis.set_power(true, true, false) == rt::ErrorCode::ok;
+    case Tweak::reverse_both_feeds:
+        value.value = -1.0;
+        return true;
+    case Tweak::target_outside_limits:
+        value.value = 50.0;
+        return configure_soft_limits(rig.axis);
+    case Tweak::target_inside_limits:
+        value.value = 5.0;
+        return configure_soft_limits(rig.axis);
+    }
+    return false;
+}
+
+// One admissibility probe: build the precondition, apply the tweak, submit
+// once, and compare the returned code against the spec table.
+int run_submit_row(Precondition precondition,
+                   axis::CommandKind kind,
+                   axis::BufferMode mode,
+                   Tweak tweak,
+                   rt::ErrorCode expected,
+                   const char *label,
+                   std::size_t index)
+{
+    SubmitRig rig;
+    if(!setup(precondition, rig)) {
+        std::printf("row %zu (%s): precondition setup failed\n", index, label);
+        return fail("axis submit admissibility setup");
+    }
+    axis::AxisCommand value = command(kind, mode);
+    if(!apply_tweak(rig, value, tweak)) {
+        std::printf("row %zu (%s): tweak setup failed\n", index, label);
+        return fail("axis submit admissibility tweak");
+    }
+    const rt::Result<std::uint32_t> result = rig.axis.submit(value);
+    const rt::ErrorCode actual = result ? rt::ErrorCode::ok : result.error();
+    if(actual != expected) {
+        std::printf("row %zu (%s): expected %s, got %s\n", index, label,
+                    error_name(expected), error_name(actual));
+        return fail("axis submit admissibility code");
+    }
+    if(result && result.value() == 0) {
+        std::printf("row %zu (%s): accepted command carries id 0\n", index, label);
+        return fail("axis submit admissibility id");
+    }
+    return 0;
+}
+
+int check_axis_submit_admissibility_matrix()
+{
+    using P = Precondition;
+    using K = axis::CommandKind;
+    using M = axis::BufferMode;
+    using E = rt::ErrorCode;
+
+    struct SubmitRow
+    {
+        P precondition;
+        K kind;
+        M mode;
+        E expected;
+    };
+
+    // Full Precondition x CommandKind x BufferMode product, no tweaks.
+    static const SubmitRow rows[] = {
+        // Powered standstill, both feeds enabled, no soft limits: only the
+        // torque takeover rule (guard B) bites.
+        {P::clean, K::move_absolute, M::aborting, E::ok},
+        {P::clean, K::move_absolute, M::buffered, E::ok},
+        {P::clean, K::move_absolute, M::blending_low, E::ok},
+        {P::clean, K::move_absolute, M::blending_high, E::ok},
+        {P::clean, K::move_relative, M::aborting, E::ok},
+        {P::clean, K::move_relative, M::buffered, E::ok},
+        {P::clean, K::move_relative, M::blending_low, E::ok},
+        {P::clean, K::move_relative, M::blending_high, E::ok},
+        {P::clean, K::move_additive, M::aborting, E::ok},
+        {P::clean, K::move_additive, M::buffered, E::ok},
+        {P::clean, K::move_additive, M::blending_low, E::ok},
+        {P::clean, K::move_additive, M::blending_high, E::ok},
+        {P::clean, K::move_velocity, M::aborting, E::ok},
+        {P::clean, K::move_velocity, M::buffered, E::ok},
+        {P::clean, K::move_velocity, M::blending_low, E::ok},
+        {P::clean, K::move_velocity, M::blending_high, E::ok},
+        {P::clean, K::move_continuous_absolute, M::aborting, E::ok},
+        {P::clean, K::move_continuous_absolute, M::buffered, E::ok},
+        {P::clean, K::move_continuous_absolute, M::blending_low, E::ok},
+        {P::clean, K::move_continuous_absolute, M::blending_high, E::ok},
+        {P::clean, K::move_continuous_relative, M::aborting, E::ok},
+        {P::clean, K::move_continuous_relative, M::buffered, E::ok},
+        {P::clean, K::move_continuous_relative, M::blending_low, E::ok},
+        {P::clean, K::move_continuous_relative, M::blending_high, E::ok},
+        {P::clean, K::home, M::aborting, E::ok},
+        {P::clean, K::home, M::buffered, E::ok},
+        {P::clean, K::home, M::blending_low, E::ok},
+        {P::clean, K::home, M::blending_high, E::ok},
+        {P::clean, K::halt, M::aborting, E::ok},
+        {P::clean, K::halt, M::buffered, E::ok},
+        {P::clean, K::halt, M::blending_low, E::ok},
+        {P::clean, K::halt, M::blending_high, E::ok},
+        {P::clean, K::stop, M::aborting, E::ok},
+        {P::clean, K::stop, M::buffered, E::ok},
+        {P::clean, K::stop, M::blending_low, E::ok},
+        {P::clean, K::stop, M::blending_high, E::ok},
+        {P::clean, K::torque, M::aborting, E::ok},
+        {P::clean, K::torque, M::buffered, E::unsupported},
+        {P::clean, K::torque, M::blending_low, E::unsupported},
+        {P::clean, K::torque, M::blending_high, E::unsupported},
+
+        // Guard A (~state.h:1301) short-circuits everything while unpowered.
+        {P::unpowered, K::move_absolute, M::aborting, E::invalid_argument},
+        {P::unpowered, K::move_absolute, M::buffered, E::invalid_argument},
+        {P::unpowered, K::move_absolute, M::blending_low, E::invalid_argument},
+        {P::unpowered, K::move_absolute, M::blending_high, E::invalid_argument},
+        {P::unpowered, K::move_relative, M::aborting, E::invalid_argument},
+        {P::unpowered, K::move_relative, M::buffered, E::invalid_argument},
+        {P::unpowered, K::move_relative, M::blending_low, E::invalid_argument},
+        {P::unpowered, K::move_relative, M::blending_high, E::invalid_argument},
+        {P::unpowered, K::move_additive, M::aborting, E::invalid_argument},
+        {P::unpowered, K::move_additive, M::buffered, E::invalid_argument},
+        {P::unpowered, K::move_additive, M::blending_low, E::invalid_argument},
+        {P::unpowered, K::move_additive, M::blending_high, E::invalid_argument},
+        {P::unpowered, K::move_velocity, M::aborting, E::invalid_argument},
+        {P::unpowered, K::move_velocity, M::buffered, E::invalid_argument},
+        {P::unpowered, K::move_velocity, M::blending_low, E::invalid_argument},
+        {P::unpowered, K::move_velocity, M::blending_high, E::invalid_argument},
+        {P::unpowered, K::move_continuous_absolute, M::aborting, E::invalid_argument},
+        {P::unpowered, K::move_continuous_absolute, M::buffered, E::invalid_argument},
+        {P::unpowered, K::move_continuous_absolute, M::blending_low, E::invalid_argument},
+        {P::unpowered, K::move_continuous_absolute, M::blending_high, E::invalid_argument},
+        {P::unpowered, K::move_continuous_relative, M::aborting, E::invalid_argument},
+        {P::unpowered, K::move_continuous_relative, M::buffered, E::invalid_argument},
+        {P::unpowered, K::move_continuous_relative, M::blending_low, E::invalid_argument},
+        {P::unpowered, K::move_continuous_relative, M::blending_high, E::invalid_argument},
+        {P::unpowered, K::home, M::aborting, E::invalid_argument},
+        {P::unpowered, K::home, M::buffered, E::invalid_argument},
+        {P::unpowered, K::home, M::blending_low, E::invalid_argument},
+        {P::unpowered, K::home, M::blending_high, E::invalid_argument},
+        {P::unpowered, K::halt, M::aborting, E::invalid_argument},
+        {P::unpowered, K::halt, M::buffered, E::invalid_argument},
+        {P::unpowered, K::halt, M::blending_low, E::invalid_argument},
+        {P::unpowered, K::halt, M::blending_high, E::invalid_argument},
+        {P::unpowered, K::stop, M::aborting, E::invalid_argument},
+        {P::unpowered, K::stop, M::buffered, E::invalid_argument},
+        {P::unpowered, K::stop, M::blending_low, E::invalid_argument},
+        {P::unpowered, K::stop, M::blending_high, E::invalid_argument},
+        {P::unpowered, K::torque, M::aborting, E::invalid_argument},
+        {P::unpowered, K::torque, M::buffered, E::invalid_argument},
+        {P::unpowered, K::torque, M::blending_low, E::invalid_argument},
+        {P::unpowered, K::torque, M::blending_high, E::invalid_argument},
+
+        // Guard A again: errorstop rejects before any kind/mode reasoning.
+        {P::errorstop, K::move_absolute, M::aborting, E::invalid_argument},
+        {P::errorstop, K::move_absolute, M::buffered, E::invalid_argument},
+        {P::errorstop, K::move_absolute, M::blending_low, E::invalid_argument},
+        {P::errorstop, K::move_absolute, M::blending_high, E::invalid_argument},
+        {P::errorstop, K::move_relative, M::aborting, E::invalid_argument},
+        {P::errorstop, K::move_relative, M::buffered, E::invalid_argument},
+        {P::errorstop, K::move_relative, M::blending_low, E::invalid_argument},
+        {P::errorstop, K::move_relative, M::blending_high, E::invalid_argument},
+        {P::errorstop, K::move_additive, M::aborting, E::invalid_argument},
+        {P::errorstop, K::move_additive, M::buffered, E::invalid_argument},
+        {P::errorstop, K::move_additive, M::blending_low, E::invalid_argument},
+        {P::errorstop, K::move_additive, M::blending_high, E::invalid_argument},
+        {P::errorstop, K::move_velocity, M::aborting, E::invalid_argument},
+        {P::errorstop, K::move_velocity, M::buffered, E::invalid_argument},
+        {P::errorstop, K::move_velocity, M::blending_low, E::invalid_argument},
+        {P::errorstop, K::move_velocity, M::blending_high, E::invalid_argument},
+        {P::errorstop, K::move_continuous_absolute, M::aborting, E::invalid_argument},
+        {P::errorstop, K::move_continuous_absolute, M::buffered, E::invalid_argument},
+        {P::errorstop, K::move_continuous_absolute, M::blending_low, E::invalid_argument},
+        {P::errorstop, K::move_continuous_absolute, M::blending_high, E::invalid_argument},
+        {P::errorstop, K::move_continuous_relative, M::aborting, E::invalid_argument},
+        {P::errorstop, K::move_continuous_relative, M::buffered, E::invalid_argument},
+        {P::errorstop, K::move_continuous_relative, M::blending_low, E::invalid_argument},
+        {P::errorstop, K::move_continuous_relative, M::blending_high, E::invalid_argument},
+        {P::errorstop, K::home, M::aborting, E::invalid_argument},
+        {P::errorstop, K::home, M::buffered, E::invalid_argument},
+        {P::errorstop, K::home, M::blending_low, E::invalid_argument},
+        {P::errorstop, K::home, M::blending_high, E::invalid_argument},
+        {P::errorstop, K::halt, M::aborting, E::invalid_argument},
+        {P::errorstop, K::halt, M::buffered, E::invalid_argument},
+        {P::errorstop, K::halt, M::blending_low, E::invalid_argument},
+        {P::errorstop, K::halt, M::blending_high, E::invalid_argument},
+        {P::errorstop, K::stop, M::aborting, E::invalid_argument},
+        {P::errorstop, K::stop, M::buffered, E::invalid_argument},
+        {P::errorstop, K::stop, M::blending_low, E::invalid_argument},
+        {P::errorstop, K::stop, M::blending_high, E::invalid_argument},
+        {P::errorstop, K::torque, M::aborting, E::invalid_argument},
+        {P::errorstop, K::torque, M::buffered, E::invalid_argument},
+        {P::errorstop, K::torque, M::blending_low, E::invalid_argument},
+        {P::errorstop, K::torque, M::blending_high, E::invalid_argument},
+
+        // Guard C (~state.h:1318): a locked stop only admits another stop;
+        // torque still loses to guard B first for the buffered modes.
+        {P::stop_locked, K::move_absolute, M::aborting, E::precondition_failed},
+        {P::stop_locked, K::move_absolute, M::buffered, E::precondition_failed},
+        {P::stop_locked, K::move_absolute, M::blending_low, E::precondition_failed},
+        {P::stop_locked, K::move_absolute, M::blending_high, E::precondition_failed},
+        {P::stop_locked, K::move_relative, M::aborting, E::precondition_failed},
+        {P::stop_locked, K::move_relative, M::buffered, E::precondition_failed},
+        {P::stop_locked, K::move_relative, M::blending_low, E::precondition_failed},
+        {P::stop_locked, K::move_relative, M::blending_high, E::precondition_failed},
+        {P::stop_locked, K::move_additive, M::aborting, E::precondition_failed},
+        {P::stop_locked, K::move_additive, M::buffered, E::precondition_failed},
+        {P::stop_locked, K::move_additive, M::blending_low, E::precondition_failed},
+        {P::stop_locked, K::move_additive, M::blending_high, E::precondition_failed},
+        {P::stop_locked, K::move_velocity, M::aborting, E::precondition_failed},
+        {P::stop_locked, K::move_velocity, M::buffered, E::precondition_failed},
+        {P::stop_locked, K::move_velocity, M::blending_low, E::precondition_failed},
+        {P::stop_locked, K::move_velocity, M::blending_high, E::precondition_failed},
+        {P::stop_locked, K::move_continuous_absolute, M::aborting, E::precondition_failed},
+        {P::stop_locked, K::move_continuous_absolute, M::buffered, E::precondition_failed},
+        {P::stop_locked, K::move_continuous_absolute, M::blending_low, E::precondition_failed},
+        {P::stop_locked, K::move_continuous_absolute, M::blending_high, E::precondition_failed},
+        {P::stop_locked, K::move_continuous_relative, M::aborting, E::precondition_failed},
+        {P::stop_locked, K::move_continuous_relative, M::buffered, E::precondition_failed},
+        {P::stop_locked, K::move_continuous_relative, M::blending_low, E::precondition_failed},
+        {P::stop_locked, K::move_continuous_relative, M::blending_high, E::precondition_failed},
+        {P::stop_locked, K::home, M::aborting, E::precondition_failed},
+        {P::stop_locked, K::home, M::buffered, E::precondition_failed},
+        {P::stop_locked, K::home, M::blending_low, E::precondition_failed},
+        {P::stop_locked, K::home, M::blending_high, E::precondition_failed},
+        {P::stop_locked, K::halt, M::aborting, E::precondition_failed},
+        {P::stop_locked, K::halt, M::buffered, E::precondition_failed},
+        {P::stop_locked, K::halt, M::blending_low, E::precondition_failed},
+        {P::stop_locked, K::halt, M::blending_high, E::precondition_failed},
+        {P::stop_locked, K::stop, M::aborting, E::ok},
+        {P::stop_locked, K::stop, M::buffered, E::ok},
+        {P::stop_locked, K::stop, M::blending_low, E::ok},
+        {P::stop_locked, K::stop, M::blending_high, E::ok},
+        {P::stop_locked, K::torque, M::aborting, E::precondition_failed},
+        {P::stop_locked, K::torque, M::buffered, E::unsupported},
+        {P::stop_locked, K::torque, M::blending_low, E::unsupported},
+        {P::stop_locked, K::torque, M::blending_high, E::unsupported},
+
+        // Guard E (~state.h:1332): a synchronized axis is only takeable over
+        // by an aborting command.
+        {P::sync_engaged, K::move_absolute, M::aborting, E::ok},
+        {P::sync_engaged, K::move_absolute, M::buffered, E::invalid_argument},
+        {P::sync_engaged, K::move_absolute, M::blending_low, E::invalid_argument},
+        {P::sync_engaged, K::move_absolute, M::blending_high, E::invalid_argument},
+        {P::sync_engaged, K::move_relative, M::aborting, E::ok},
+        {P::sync_engaged, K::move_relative, M::buffered, E::invalid_argument},
+        {P::sync_engaged, K::move_relative, M::blending_low, E::invalid_argument},
+        {P::sync_engaged, K::move_relative, M::blending_high, E::invalid_argument},
+        {P::sync_engaged, K::move_additive, M::aborting, E::ok},
+        {P::sync_engaged, K::move_additive, M::buffered, E::invalid_argument},
+        {P::sync_engaged, K::move_additive, M::blending_low, E::invalid_argument},
+        {P::sync_engaged, K::move_additive, M::blending_high, E::invalid_argument},
+        {P::sync_engaged, K::move_velocity, M::aborting, E::ok},
+        {P::sync_engaged, K::move_velocity, M::buffered, E::invalid_argument},
+        {P::sync_engaged, K::move_velocity, M::blending_low, E::invalid_argument},
+        {P::sync_engaged, K::move_velocity, M::blending_high, E::invalid_argument},
+        {P::sync_engaged, K::move_continuous_absolute, M::aborting, E::ok},
+        {P::sync_engaged, K::move_continuous_absolute, M::buffered, E::invalid_argument},
+        {P::sync_engaged, K::move_continuous_absolute, M::blending_low, E::invalid_argument},
+        {P::sync_engaged, K::move_continuous_absolute, M::blending_high, E::invalid_argument},
+        {P::sync_engaged, K::move_continuous_relative, M::aborting, E::ok},
+        {P::sync_engaged, K::move_continuous_relative, M::buffered, E::invalid_argument},
+        {P::sync_engaged, K::move_continuous_relative, M::blending_low, E::invalid_argument},
+        {P::sync_engaged, K::move_continuous_relative, M::blending_high, E::invalid_argument},
+        {P::sync_engaged, K::home, M::aborting, E::ok},
+        {P::sync_engaged, K::home, M::buffered, E::invalid_argument},
+        {P::sync_engaged, K::home, M::blending_low, E::invalid_argument},
+        {P::sync_engaged, K::home, M::blending_high, E::invalid_argument},
+        {P::sync_engaged, K::halt, M::aborting, E::ok},
+        {P::sync_engaged, K::halt, M::buffered, E::invalid_argument},
+        {P::sync_engaged, K::halt, M::blending_low, E::invalid_argument},
+        {P::sync_engaged, K::halt, M::blending_high, E::invalid_argument},
+        {P::sync_engaged, K::stop, M::aborting, E::ok},
+        {P::sync_engaged, K::stop, M::buffered, E::invalid_argument},
+        {P::sync_engaged, K::stop, M::blending_low, E::invalid_argument},
+        {P::sync_engaged, K::stop, M::blending_high, E::invalid_argument},
+        {P::sync_engaged, K::torque, M::aborting, E::ok},
+        {P::sync_engaged, K::torque, M::buffered, E::unsupported},
+        {P::sync_engaged, K::torque, M::blending_low, E::unsupported},
+        {P::sync_engaged, K::torque, M::blending_high, E::unsupported},
+
+        // Guard E again through the stream_active_ arm.
+        {P::stream_active, K::move_absolute, M::aborting, E::ok},
+        {P::stream_active, K::move_absolute, M::buffered, E::invalid_argument},
+        {P::stream_active, K::move_absolute, M::blending_low, E::invalid_argument},
+        {P::stream_active, K::move_absolute, M::blending_high, E::invalid_argument},
+        {P::stream_active, K::move_relative, M::aborting, E::ok},
+        {P::stream_active, K::move_relative, M::buffered, E::invalid_argument},
+        {P::stream_active, K::move_relative, M::blending_low, E::invalid_argument},
+        {P::stream_active, K::move_relative, M::blending_high, E::invalid_argument},
+        {P::stream_active, K::move_additive, M::aborting, E::ok},
+        {P::stream_active, K::move_additive, M::buffered, E::invalid_argument},
+        {P::stream_active, K::move_additive, M::blending_low, E::invalid_argument},
+        {P::stream_active, K::move_additive, M::blending_high, E::invalid_argument},
+        {P::stream_active, K::move_velocity, M::aborting, E::ok},
+        {P::stream_active, K::move_velocity, M::buffered, E::invalid_argument},
+        {P::stream_active, K::move_velocity, M::blending_low, E::invalid_argument},
+        {P::stream_active, K::move_velocity, M::blending_high, E::invalid_argument},
+        {P::stream_active, K::move_continuous_absolute, M::aborting, E::ok},
+        {P::stream_active, K::move_continuous_absolute, M::buffered, E::invalid_argument},
+        {P::stream_active, K::move_continuous_absolute, M::blending_low, E::invalid_argument},
+        {P::stream_active, K::move_continuous_absolute, M::blending_high, E::invalid_argument},
+        {P::stream_active, K::move_continuous_relative, M::aborting, E::ok},
+        {P::stream_active, K::move_continuous_relative, M::buffered, E::invalid_argument},
+        {P::stream_active, K::move_continuous_relative, M::blending_low, E::invalid_argument},
+        {P::stream_active, K::move_continuous_relative, M::blending_high, E::invalid_argument},
+        {P::stream_active, K::home, M::aborting, E::ok},
+        {P::stream_active, K::home, M::buffered, E::invalid_argument},
+        {P::stream_active, K::home, M::blending_low, E::invalid_argument},
+        {P::stream_active, K::home, M::blending_high, E::invalid_argument},
+        {P::stream_active, K::halt, M::aborting, E::ok},
+        {P::stream_active, K::halt, M::buffered, E::invalid_argument},
+        {P::stream_active, K::halt, M::blending_low, E::invalid_argument},
+        {P::stream_active, K::halt, M::blending_high, E::invalid_argument},
+        {P::stream_active, K::stop, M::aborting, E::ok},
+        {P::stream_active, K::stop, M::buffered, E::invalid_argument},
+        {P::stream_active, K::stop, M::blending_low, E::invalid_argument},
+        {P::stream_active, K::stop, M::blending_high, E::invalid_argument},
+        {P::stream_active, K::torque, M::aborting, E::ok},
+        {P::stream_active, K::torque, M::buffered, E::unsupported},
+        {P::stream_active, K::torque, M::blending_low, E::unsupported},
+        {P::stream_active, K::torque, M::blending_high, E::unsupported},
+
+        // Guard H (~state.h:1376): an active acceleration profile has no
+        // completion point to queue behind. torque returns at ~1356, before
+        // the guard, so an aborting torque takeover is still admissible.
+        {P::accel_profile_active, K::move_absolute, M::aborting, E::ok},
+        {P::accel_profile_active, K::move_absolute, M::buffered, E::unsupported},
+        {P::accel_profile_active, K::move_absolute, M::blending_low, E::unsupported},
+        {P::accel_profile_active, K::move_absolute, M::blending_high, E::unsupported},
+        {P::accel_profile_active, K::move_relative, M::aborting, E::ok},
+        {P::accel_profile_active, K::move_relative, M::buffered, E::unsupported},
+        {P::accel_profile_active, K::move_relative, M::blending_low, E::unsupported},
+        {P::accel_profile_active, K::move_relative, M::blending_high, E::unsupported},
+        {P::accel_profile_active, K::move_additive, M::aborting, E::ok},
+        {P::accel_profile_active, K::move_additive, M::buffered, E::unsupported},
+        {P::accel_profile_active, K::move_additive, M::blending_low, E::unsupported},
+        {P::accel_profile_active, K::move_additive, M::blending_high, E::unsupported},
+        {P::accel_profile_active, K::move_velocity, M::aborting, E::ok},
+        {P::accel_profile_active, K::move_velocity, M::buffered, E::unsupported},
+        {P::accel_profile_active, K::move_velocity, M::blending_low, E::unsupported},
+        {P::accel_profile_active, K::move_velocity, M::blending_high, E::unsupported},
+        {P::accel_profile_active, K::move_continuous_absolute, M::aborting, E::ok},
+        {P::accel_profile_active, K::move_continuous_absolute, M::buffered, E::unsupported},
+        {P::accel_profile_active, K::move_continuous_absolute, M::blending_low, E::unsupported},
+        {P::accel_profile_active, K::move_continuous_absolute, M::blending_high, E::unsupported},
+        {P::accel_profile_active, K::move_continuous_relative, M::aborting, E::ok},
+        {P::accel_profile_active, K::move_continuous_relative, M::buffered, E::unsupported},
+        {P::accel_profile_active, K::move_continuous_relative, M::blending_low, E::unsupported},
+        {P::accel_profile_active, K::move_continuous_relative, M::blending_high, E::unsupported},
+        {P::accel_profile_active, K::home, M::aborting, E::ok},
+        {P::accel_profile_active, K::home, M::buffered, E::unsupported},
+        {P::accel_profile_active, K::home, M::blending_low, E::unsupported},
+        {P::accel_profile_active, K::home, M::blending_high, E::unsupported},
+        {P::accel_profile_active, K::halt, M::aborting, E::ok},
+        {P::accel_profile_active, K::halt, M::buffered, E::unsupported},
+        {P::accel_profile_active, K::halt, M::blending_low, E::unsupported},
+        {P::accel_profile_active, K::halt, M::blending_high, E::unsupported},
+        {P::accel_profile_active, K::stop, M::aborting, E::ok},
+        {P::accel_profile_active, K::stop, M::buffered, E::unsupported},
+        {P::accel_profile_active, K::stop, M::blending_low, E::unsupported},
+        {P::accel_profile_active, K::stop, M::blending_high, E::unsupported},
+        {P::accel_profile_active, K::torque, M::aborting, E::ok},
+        {P::accel_profile_active, K::torque, M::buffered, E::unsupported},
+        {P::accel_profile_active, K::torque, M::blending_low, E::unsupported},
+        {P::accel_profile_active, K::torque, M::blending_high, E::unsupported},
+
+    };
+
+    std::size_t index = 0;
+    for(const SubmitRow &row : rows) {
+        if(run_submit_row(row.precondition, row.kind, row.mode, Tweak::none,
+                          row.expected, "product", index++) != 0) {
+            return 1;
+        }
+    }
+
+    struct GuardRow
+    {
+        P precondition;
+        K kind;
+        M mode;
+        Tweak tweak;
+        E expected;
+        const char *label;
+    };
+
+    // Firing / non-firing pairs for the guards the plain product cannot
+    // reach, plus the precedence rows that pin the first-match order.
+    static const GuardRow guard_rows[] = {
+        {P::clean, K::move_absolute, M::aborting, Tweak::invalid_buffer_mode,
+         E::invalid_argument, "A fires: buffer mode outside the enum"},
+        {P::clean, K::move_absolute, M::aborting, Tweak::nan_target,
+         E::invalid_argument, "A fires: non-finite target"},
+        {P::clean, K::move_absolute, M::aborting, Tweak::zero_velocity,
+         E::invalid_argument, "A fires: non-torque kinds need a positive velocity"},
+        {P::clean, K::torque, M::aborting, Tweak::torque_zero_velocity, E::ok,
+         "A quiet: torque tolerates a zero velocity limit"},
+        {P::clean, K::torque, M::aborting, Tweak::torque_negative_velocity,
+         E::invalid_argument, "A fires: torque rejects a negative velocity limit"},
+        {P::clean, K::torque, M::aborting, Tweak::torque_shortest_way,
+         E::invalid_argument, "A fires: torque rejects shortest_way"},
+        {P::clean, K::torque, M::aborting, Tweak::invalid_direction,
+         E::invalid_argument, "A fires: torque rejects a Direction outside the enum"},
+        {P::clean, K::move_absolute, M::aborting, Tweak::none, E::ok,
+         "A quiet: the untouched template is admissible"},
+
+        {P::clean, K::move_absolute, M::aborting, Tweak::invalid_direction,
+         E::invalid_argument, "D fires: absolute move, Direction outside the enum"},
+        {P::clean, K::move_continuous_absolute, M::aborting, Tweak::invalid_direction,
+         E::invalid_argument, "D fires: continuous absolute, Direction outside the enum"},
+        {P::clean, K::move_absolute, M::aborting, Tweak::shortest_way_direction, E::ok,
+         "D quiet: shortest_way is a valid Direction"},
+        {P::clean, K::move_relative, M::aborting, Tweak::invalid_direction, E::ok,
+         "D quiet: the guard is scoped to the absolute kinds"},
+
+        {P::clean, K::move_continuous_absolute, M::aborting, Tweak::zero_end_velocity,
+         E::unsupported, "F fires: continuous absolute with a zero end velocity"},
+        {P::clean, K::move_continuous_relative, M::buffered, Tweak::zero_end_velocity,
+         E::unsupported, "F fires: continuous relative with a zero end velocity"},
+        {P::clean, K::move_absolute, M::aborting, Tweak::zero_end_velocity, E::ok,
+         "F quiet: end velocity is ignored on a discrete move"},
+
+        {P::clean, K::move_relative, M::aborting, Tweak::reverse_no_negative_feed,
+         E::precondition_failed, "G fires: reverse move into a disabled negative feed"},
+        {P::clean, K::move_absolute, M::aborting, Tweak::reverse_no_negative_feed,
+         E::precondition_failed, "G fires: absolute target behind a disabled negative feed"},
+        {P::clean, K::move_relative, M::aborting, Tweak::forward_no_negative_feed, E::ok,
+         "G quiet: forward move while only the negative feed is disabled"},
+        {P::clean, K::move_relative, M::aborting, Tweak::reverse_both_feeds, E::ok,
+         "G quiet: reverse move with both feeds enabled"},
+        {P::clean, K::halt, M::aborting, Tweak::reverse_no_negative_feed, E::ok,
+         "G quiet: halt carries no commanded direction"},
+
+        {P::clean, K::move_absolute, M::aborting, Tweak::target_outside_limits,
+         E::out_of_range, "I fires: absolute target beyond the positive soft limit"},
+        {P::clean, K::home, M::aborting, Tweak::target_outside_limits, E::out_of_range,
+         "I fires: home target beyond the positive soft limit"},
+        {P::clean, K::move_continuous_absolute, M::aborting, Tweak::target_outside_limits,
+         E::out_of_range, "I fires: continuous absolute beyond the positive soft limit"},
+        {P::clean, K::move_absolute, M::aborting, Tweak::target_inside_limits, E::ok,
+         "I quiet: absolute target inside the soft limits"},
+        {P::clean, K::move_velocity, M::aborting, Tweak::target_outside_limits, E::ok,
+         "I quiet: the guard is scoped to the absolute position kinds"},
+        {P::clean, K::move_relative, M::buffered, Tweak::target_outside_limits,
+         E::out_of_range,
+         "I quiet but start() still rejects the normalized relative target"},
+
+        // First-match precedence: an earlier guard must win even when a later
+        // one would also fire.
+        {P::sync_engaged, K::move_continuous_absolute, M::buffered, Tweak::zero_end_velocity,
+         E::invalid_argument, "E precedes F"},
+        {P::stop_locked, K::move_continuous_absolute, M::buffered, Tweak::zero_end_velocity,
+         E::precondition_failed, "C precedes F"},
+        {P::errorstop, K::move_continuous_absolute, M::buffered, Tweak::zero_end_velocity,
+         E::invalid_argument, "A precedes every later guard"},
+        {P::clean, K::move_absolute, M::aborting, Tweak::nan_target,
+         E::invalid_argument, "A precedes I"},
+    };
+
+    for(const GuardRow &row : guard_rows) {
+        if(run_submit_row(row.precondition, row.kind, row.mode, row.tweak, row.expected,
+                          row.label, index++) != 0) {
+            return 1;
+        }
     }
     return 0;
 }
@@ -258,14 +895,14 @@ int check_group_transition_matrix()
             next.relative = action % 2 != 0;
             next.target.value[0] = action % 2 == 0 ? -1.0 : 0.5;
             next.target.value[1] = action % 3 == 0 ? 2.0 : -0.5;
-            group.submit_linear(next);
+            (void)group.submit_linear(next);
             if(action == 0) group.set_group_override(0.0);
             if(action == 1) group.set_group_override(0.25);
             if(action == 2) group.stop(0.05, 0.01);
             if(action == 3) group.interrupt(0.05, 0.01);
             if(action == 4) members[0].trigger_error();
             if(action == 5) group.disable();
-            if(action == 6) group.command_info(accepted.value());
+            if(action == 6) (void)group.command_info(accepted.value());
             if(action == 7) group.set_window_depth(2);
             for(int cycle = 0; cycle < 256; ++cycle) {
                 group.cycle();
@@ -301,7 +938,7 @@ int check_sync_and_stream_matrix()
             gear.approach_velocity = scenario % 3 == 0 ? 0.1 : 0.0;
             gear.source = scenario % 2 == 0 ? axis::MasterValueSource::command
                                             : axis::MasterValueSource::actual;
-            slave.gear_in(gear);
+            (void)slave.gear_in(gear);
         } else if(scenario < 8) {
             axis::CamInCommand cam{};
             cam.master = &master1;
@@ -309,7 +946,7 @@ int check_sync_and_stream_matrix()
             cam.interpolation = scenario % 2 == 0 ? exec::CamInterpolation::linear
                                                    : exec::CamInterpolation::spline;
             cam.master_start_distance = scenario % 3 == 0 ? 0.5 : 0.0;
-            slave.cam_in(cam);
+            (void)slave.cam_in(cam);
         } else {
             axis::CombineAxesCommand combine{};
             combine.master1 = &master1;
@@ -317,9 +954,9 @@ int check_sync_and_stream_matrix()
             combine.mode = scenario % 2 == 0 ? axis::CombineMode::add_axes
                                               : axis::CombineMode::sub_axes;
             combine.source_m1 = axis::MasterValueSource::actual;
-            slave.combine_in(combine);
+            (void)slave.combine_in(combine);
         }
-        master1.submit(command(axis::CommandKind::move_absolute,
+        (void)master1.submit(command(axis::CommandKind::move_absolute,
                                axis::BufferMode::aborting));
         for(int cycle = 0; cycle < 128; ++cycle) {
             master1.cycle();
@@ -329,10 +966,10 @@ int check_sync_and_stream_matrix()
         }
         axis::PhasingCommand phase{};
         phase.phase_shift = 0.5;
-        slave.submit_phasing(phase);
+        (void)slave.submit_phasing(phase);
         phase.phase_shift = -0.25;
         phase.relative = true;
-        slave.submit_phasing(phase);
+        (void)slave.submit_phasing(phase);
         slave.sync_out();
 
         stream::StreamFilterConfig config{};
@@ -399,7 +1036,7 @@ int check_axis_property_sequences()
                 value.direction = static_cast<axis::Direction>((bits >> 16) % 5);
                 value.end_velocity = (bits & 16u) != 0 ? 0.05 : 0.0;
                 value.min_duration_cycles = static_cast<std::int64_t>((bits >> 20) % 32);
-                model.submit(value);
+                (void)model.submit(value);
                 break;
             }
             case 4: model.set_power((bits & 0x100u) != 0); break;
@@ -408,7 +1045,7 @@ int check_axis_property_sequences()
             case 7: model.reset_error(); break;
             case 8: model.shift_coordinates(random.signed_value()); break;
             case 9:
-                model.submit_superimposed(random.signed_value(), 0.1, 0.1, 0.1, 0.01);
+                (void)model.submit_superimposed(random.signed_value(), 0.1, 0.1, 0.1, 0.01);
                 break;
             case 10: model.halt_superimposed(1.0, 1.0); break;
             case 11: model.home_direct(random.signed_value()); break;
@@ -419,8 +1056,8 @@ int check_axis_property_sequences()
             case 13: model.set_digital_input(bits % 18, (bits & 0x200u) != 0); break;
             case 14: model.set_digital_output(bits % 18, (bits & 0x400u) != 0); break;
             case 15: model.abort_trigger(bits % 18); break;
-            case 16: model.begin_passive_homing(bits % 18); break;
-            default: model.abort_passive_homing(); break;
+            case 16: (void)model.begin_passive_homing(bits % 18); break;
+            default: (void)model.abort_passive_homing(); break;
             }
             const int cycles = 1 + static_cast<int>((bits >> 24) % 8);
             for(int cycle = 0; cycle < cycles; ++cycle) model.cycle();
@@ -470,9 +1107,9 @@ int check_group_property_sequences()
                 value.transition_parameter = (bits & 0x20u) != 0 ? 0.1 : 0.0;
                 value.relative = (bits & 0x40u) != 0;
                 if(bits % 16 == 2) {
-                    group.submit_circular(value);
+                    (void)group.submit_circular(value);
                 } else {
-                    group.submit_linear(value);
+                    (void)group.submit_linear(value);
                 }
                 break;
             }
@@ -480,7 +1117,7 @@ int check_group_property_sequences()
                 axis::GroupPosition target{};
                 target.size = random.next() % (axis::AxisGroup::MaxAxes + 2);
                 for(double &entry : target.value) entry = random.signed_value();
-                submit_direct(group, target, (bits & 1u) != 0, 0.2, 0.05, 0.05, 0.01);
+                (void)submit_direct(group, target, (bits & 1u) != 0, 0.2, 0.05, 0.05, 0.01);
                 break;
             }
             case 4: group.set_group_override(static_cast<double>(bits % 150) / 100.0); break;
@@ -495,7 +1132,7 @@ int check_group_property_sequences()
             case 13: group.set_tool_offset(random.signed_value(), random.signed_value(),
                                            random.signed_value()); break;
             case 14: group.set_cartesian_velocity_limit(std::fabs(random.signed_value())); break;
-            default: group.command_info(bits); break;
+            default: (void)group.command_info(bits); break;
             }
             for(std::size_t index = 0; index < count; ++index) {
                 if((bits & (1u << (index % 16))) != 0 && step % 7 == 0) {
@@ -1200,7 +1837,7 @@ int check_axis_standalone_writer_matrix()
     axis::AxisCommand queued = command(axis::CommandKind::move_absolute,
                                        axis::BufferMode::buffered);
     queued.value = 2.0;
-    base.submit(queued);
+    (void)base.submit(queued);
     if(!base.has_standalone_motion()) return fail("queued motion standalone writer");
 
     axis::AxisModel master;
@@ -2297,7 +2934,7 @@ int check_override_shift_sync_stream()
         cmd.deceleration = 0.1;
         cmd.jerk = 0.05;
         cmd.buffer_mode = axis::BufferMode::aborting;
-        model.submit(cmd);
+        (void)model.submit(cmd);
         for(int i = 0; i < 3; ++i) model.cycle();
 
         // Queue a buffered absolute command
@@ -2309,11 +2946,11 @@ int check_override_shift_sync_stream()
         q.deceleration = 0.1;
         q.jerk = 0.05;
         q.buffer_mode = axis::BufferMode::buffered;
-        model.submit(q);
+        (void)model.submit(q);
 
         // Arm a probe before shifting
         model.set_digital_input(0, false);
-        model.arm_touch_probe(0, true, 0.0, 20.0);
+        (void)model.arm_touch_probe(0, true, 0.0, 20.0);
 
         // Shift position while active + queued + probe
         if(model.shift_coordinates(0.5) != rt::ErrorCode::ok)
@@ -2337,7 +2974,7 @@ int check_override_shift_sync_stream()
         cmd.deceleration = 0.2;
         cmd.jerk = 0.1;
         cmd.buffer_mode = axis::BufferMode::aborting;
-        model.submit(cmd);
+        (void)model.submit(cmd);
         for(int i = 0; i < 5; ++i) model.cycle();
 
         // On-the-fly coordinate remap
@@ -2452,7 +3089,7 @@ int check_override_shift_sync_stream()
         cmd.deceleration = 0.1;
         cmd.jerk = 0.05;
         cmd.buffer_mode = axis::BufferMode::aborting;
-        model.submit(cmd);
+        (void)model.submit(cmd);
         for(int i = 0; i < 5; ++i) model.cycle();
 
         // Lose power feedback → errorstop
@@ -2537,7 +3174,7 @@ int check_override_shift_sync_stream()
         mcmd.deceleration = 0.2;
         mcmd.jerk = 0.1;
         mcmd.buffer_mode = axis::BufferMode::aborting;
-        master.submit(mcmd);
+        (void)master.submit(mcmd);
         for(int i = 0; i < 10; ++i) { master.cycle(); slave.cycle(); }
 
         axis::GearInCommand gear{};
@@ -2570,7 +3207,7 @@ int check_override_shift_sync_stream()
         direct_phase.velocity = 0.0;
         direct_phase.buffer_mode = axis::BufferMode::aborting;
         direct_phase.relative = true;
-        slave.submit_phasing(direct_phase);
+        (void)slave.submit_phasing(direct_phase);
         for(int i = 0; i < 5; ++i) { master.cycle(); slave.cycle(); }
 
         // Phasing query
@@ -2739,12 +3376,12 @@ int check_override_shift_sync_stream()
         model.reset_error();
 
         // Invalid: engage while already streaming
-        model.stream_engage(config);
+        (void)model.stream_engage(config);
         if(model.stream_engage(config))
             return fail("stream: double engage accepted");
 
         // Halt while streaming to abort
-        model.submit(command(axis::CommandKind::halt, axis::BufferMode::aborting));
+        (void)model.submit(command(axis::CommandKind::halt, axis::BufferMode::aborting));
         for(int i = 0; i < 50; ++i) model.cycle();
     }
 
@@ -2762,7 +3399,7 @@ int check_override_shift_sync_stream()
         cmd.deceleration = 0.1;
         cmd.jerk = 0.05;
         cmd.buffer_mode = axis::BufferMode::aborting;
-        model.submit(cmd);
+        (void)model.submit(cmd);
         for(int i = 0; i < 5; ++i) model.cycle();
 
         // Superimposed on top
@@ -2831,7 +3468,7 @@ int check_override_shift_sync_stream()
         cmd.deceleration = 0.1;
         cmd.jerk = 0.05;
         cmd.buffer_mode = axis::BufferMode::aborting;
-        model.submit(cmd);
+        (void)model.submit(cmd);
         for(int i = 0; i < 5; ++i) model.cycle();
 
         const auto homing_id = model.begin_passive_homing(0);
@@ -2847,7 +3484,7 @@ int check_override_shift_sync_stream()
         // Re-arm and abort
         const auto h2 = model.begin_passive_homing(1);
         if(!h2) return fail("passive_homing: begin2");
-        model.abort_passive_homing();
+        (void)model.abort_passive_homing();
         if(model.passive_homing_aborted_id() == 0)
             return fail("passive_homing: abort id");
 
@@ -2915,7 +3552,7 @@ int check_override_shift_sync_stream()
         cmd.deceleration = 0.1;
         cmd.jerk = 0.05;
         cmd.buffer_mode = axis::BufferMode::aborting;
-        model.submit(cmd);
+        (void)model.submit(cmd);
         for(int i = 0; i < 5; ++i) model.cycle();
 
         axis::AxisCommand stop{};
@@ -2950,7 +3587,7 @@ int check_override_shift_sync_stream()
         cmd.deceleration = 0.1;
         cmd.jerk = 0.05;
         cmd.buffer_mode = axis::BufferMode::aborting;
-        model.submit(cmd);
+        (void)model.submit(cmd);
         for(int i = 0; i < 10; ++i) model.cycle();
 
         // Disable positive direction while moving positively → abort
@@ -2984,7 +3621,7 @@ int check_override_shift_sync_stream()
         mcmd.deceleration = 0.1;
         mcmd.jerk = 0.05;
         mcmd.buffer_mode = axis::BufferMode::aborting;
-        master.submit(mcmd);
+        (void)master.submit(mcmd);
         for(int i = 0; i < 5; ++i) { master.cycle(); slave.cycle(); }
 
         axis::GearInCommand gear{};
@@ -2994,7 +3631,7 @@ int check_override_shift_sync_stream()
         gear.acceleration = 0.1;
         gear.deceleration = 0.1;
         gear.jerk = 0.05;
-        slave.gear_in(gear);
+        (void)slave.gear_in(gear);
         for(int i = 0; i < 10; ++i) { master.cycle(); slave.cycle(); }
 
         // Trigger error while synced
@@ -3283,7 +3920,7 @@ int check_fb_homing_io_sync_matrix()
         mcmd.deceleration = 0.2;
         mcmd.jerk = 0.1;
         mcmd.buffer_mode = axis::BufferMode::aborting;
-        master.submit(mcmd);
+        (void)master.submit(mcmd);
         for(int i = 0; i < 10; ++i) { master.cycle(); slave.cycle(); }
 
         // GearIn FB
@@ -3407,7 +4044,7 @@ int check_homing_and_io_paths()
         cmd.deceleration = 0.1;
         cmd.jerk = 0.05;
         cmd.buffer_mode = axis::BufferMode::aborting;
-        model.submit(cmd);
+        (void)model.submit(cmd);
         for(int i = 0; i < 5; ++i) model.cycle();
         model.finish_homing();
     }
@@ -3419,18 +4056,18 @@ int check_homing_and_io_paths()
 
         for(std::size_t i = 0; i < axis::AxisModel::DigitalInputCount; ++i) {
             model.set_digital_input(i, true);
-            model.digital_input(i);
+            (void)model.digital_input(i);
         }
         for(std::size_t i = 0; i < axis::AxisModel::DigitalOutputCount; ++i) {
             model.set_digital_output(i, (i % 2) == 0);
-            model.digital_output(i);
+            (void)model.digital_output(i);
         }
 
         // Out of range
         model.set_digital_input(99, true);
-        model.digital_input(99);
+        (void)model.digital_input(99);
         model.set_digital_output(99, true);
-        model.digital_output(99);
+        (void)model.digital_output(99);
     }
 
     // --- Touch probe with window ---
@@ -3445,7 +4082,7 @@ int check_homing_and_io_paths()
         cmd.deceleration = 0.2;
         cmd.jerk = 0.1;
         cmd.buffer_mode = axis::BufferMode::aborting;
-        model.submit(cmd);
+        (void)model.submit(cmd);
         for(int i = 0; i < 3; ++i) model.cycle();
 
         // Window probe
@@ -3464,14 +4101,14 @@ int check_homing_and_io_paths()
         model.abort_trigger(0);
 
         // Invalid probe
-        model.arm_touch_probe(99, false, 0.0, 0.0);
+        (void)model.arm_touch_probe(99, false, 0.0, 0.0);
         model.abort_trigger(99);
         model.probe_captured(99);
         model.probe_recorded_position(99);
         model.probe_command_id(99);
 
         // Invalid window: first > last
-        model.arm_touch_probe(1, true, 5.0, 1.0);
+        (void)model.arm_touch_probe(1, true, 5.0, 1.0);
     }
 
     // --- Read/write axis parameters ---
@@ -3481,15 +4118,15 @@ int check_homing_and_io_paths()
 
         model.write_parameter(axis::AxisParameter::sw_limit_pos, 100.0);
         model.write_parameter(axis::AxisParameter::sw_limit_neg, -100.0);
-        model.read_parameter(axis::AxisParameter::commanded_position);
-        model.read_parameter(axis::AxisParameter::sw_limit_pos);
-        model.read_parameter(axis::AxisParameter::sw_limit_neg);
+        (void)model.read_parameter(axis::AxisParameter::commanded_position);
+        (void)model.read_parameter(axis::AxisParameter::sw_limit_pos);
+        (void)model.read_parameter(axis::AxisParameter::sw_limit_neg);
 
         // Write bool parameter
         model.write_bool_parameter(axis::AxisParameter::enable_limit_pos, true);
         model.write_bool_parameter(axis::AxisParameter::enable_limit_neg, true);
-        model.read_bool_parameter(axis::AxisParameter::enable_limit_pos);
-        model.read_bool_parameter(axis::AxisParameter::enable_limit_neg);
+        (void)model.read_bool_parameter(axis::AxisParameter::enable_limit_pos);
+        (void)model.read_bool_parameter(axis::AxisParameter::enable_limit_neg);
 
         // Invalid: limits crossing
         model.write_parameter(axis::AxisParameter::sw_limit_pos, -200.0);
@@ -3533,7 +4170,7 @@ int check_homing_and_io_paths()
         cmd.deceleration = 0.1;
         cmd.jerk = 0.05;
         cmd.buffer_mode = axis::BufferMode::aborting;
-        model.submit(cmd);
+        (void)model.submit(cmd);
         for(int i = 0; i < 5; ++i) model.cycle();
         if(model.set_position(0.0) == rt::ErrorCode::ok)
             return fail("set_position: moving accepted");
@@ -3546,6 +4183,7 @@ int main()
 {
     if(check_static_vector_instantiation_matrix() != 0 ||
        check_axis_command_matrix() != 0 || check_axis_queue_matrix() != 0 ||
+       check_axis_submit_admissibility_matrix() != 0 ||
        check_group_transition_matrix() != 0 || check_sync_and_stream_matrix() != 0 ||
        check_axis_property_sequences() != 0 || check_group_property_sequences() != 0 ||
        check_group_kinematics_metadata_matrix() != 0 ||

@@ -7,7 +7,9 @@
 Responsibilities:
 
 - integer cycle ticks and durations;
-- 全核 RT 基础设施所需的定长容器（fixed-capacity containers）;
+- 全核 RT 基础设施所需的定长容器（fixed-capacity containers）；`StaticVector`
+  急构造存储、`pop_back()/clear()` 只动 size 不析构元素，元素类型必须
+  trivially destructible + trivially copyable（编译期 `static_assert` 强制）;
 - single-producer / single-consumer queues;
 - small error-code based `Result` values;
 - 辅助头：`error_text.h`（错误码到文本，仅供非周期路径/加载域的诊断与日志
@@ -21,6 +23,14 @@ RT constraints:
 - no exceptions or RTTI;
 - no OS calls or wall-clock reads;
 - no floating-point time accumulation.
+
+错误返回契约：L0 全部携带错误信息的返回值（`Result<T>`、容器/队列的
+`ErrorCode`/`bool` 返回）均标注 `[[nodiscard]]`，且核心目标以
+`-Werror=unused-result`（MSVC `/we4834`）强制——丢弃错误返回值无法
+编译通过。**有意**丢弃必须写 `(void)f()`，并保证语境中存在使丢弃安全
+的守卫（如 pop 前的非空检查、push 前的容量预检）。消费安装头文件的
+下游若自带 `-Werror=unused-result`，其调用点将同样收到诊断（源码级
+契约，无 ABI 影响）。
 
 依赖与消费者：L0 只依赖对所提供类型不分配的 C++17 标准库设施；L0 不得依赖
 PLCopen FB 语义、旧 `src/` 或 adapters。作为阶梯首层（L0-L7 阶梯 + 支撑库

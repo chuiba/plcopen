@@ -121,7 +121,7 @@ struct Load
             velocity.acceleration = 0.0001;
             velocity.deceleration = 0.0001;
             velocity.jerk = 0.0001;
-            axis_model.submit(velocity);
+            (void)axis_model.submit(velocity);
         }
         for(auto &axis_model : member) {
             axis_model.set_power(true);
@@ -137,7 +137,7 @@ struct Load
         linear.acceleration = 0.0001;
         linear.deceleration = 0.0001;
         linear.jerk = 0.0001;
-        group.submit_linear(linear);
+        (void)group.submit_linear(linear);
     }
 
     void cycle()

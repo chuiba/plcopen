@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 
+#include "axis/group.h"
 #include "kin/serial_chain.h"
 #include "test_support/serial_chain_fixture.h"
 
@@ -428,6 +429,37 @@ int check_failure_classification_and_best_effort()
     return 0;
 }
 
+// The chain's margin is an inert sentinel (v2.1 #5: the numerical link
+// classifies singularities through the solver, not through an entry-ban
+// pre-check), so it declares `none` and the L5 seam refuses a gate threshold
+// at config time instead of silently not gating.
+int check_margin_semantics_and_group_refusal()
+{
+    const kin::SerialChain chain(ur_like_spec());
+    if (chain.margin_semantics() != kin::MarginSemantics::none)
+    {
+        return fail("serial chain declares sentinel margin semantics");
+    }
+
+    axis::AxisModel axes[6];
+    axis::AxisGroup group;
+    for (auto &axis_model : axes)
+    {
+        axis_model.set_power(true);
+        group.add_axis(axis_model);
+    }
+    group.enable();
+    if (group.set_pose_kinematics(&chain, 0.3, 0.25) != rt::ErrorCode::invalid_argument)
+    {
+        return fail("group refuses an entry-ban threshold on the numerical chain");
+    }
+    if (group.set_pose_kinematics(&chain, 0.0, 0.25) != rt::ErrorCode::ok)
+    {
+        return fail("group accepts the numerical chain without gating");
+    }
+    return 0;
+}
+
 int check_roundtrip_fuzz()
 {
     const kin::SerialChain chain(ur_like_spec());
@@ -506,7 +538,8 @@ int main()
     if (check_dh_forward_examples() != 0 || check_fixed_pose_oracles() != 0 ||
         check_ur_like_warm_seed_inverse() != 0 ||
         check_redundant_preference_and_determinism() != 0 ||
-        check_failure_classification_and_best_effort() != 0 || check_roundtrip_fuzz() != 0)
+        check_failure_classification_and_best_effort() != 0 ||
+        check_margin_semantics_and_group_refusal() != 0 || check_roundtrip_fuzz() != 0)
     {
         return 1;
     }

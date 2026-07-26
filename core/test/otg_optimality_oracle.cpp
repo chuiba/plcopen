@@ -582,10 +582,15 @@ struct DomainStats
     int compared = 0;
     int oracle_miss = 0;
     int fail = 0;
+    int convention_excluded = 0;
+    int relaxed_compared = 0;
     int ec_max = 0;
     int ec_min = 0;
     double ec_sum = 0.0;
     bool hard_gate = true;
+    // Suboptimality upper bound (KB-100): excess above this cap fails the
+    // domain even where the lower-bound gate is soft. 0 disables.
+    int ec_cap = 0;
 
     void record(otg::State1D from, otg::Target1D to, otg::Limits1D lim,
                 const StructureTable &tab, int case_id)
@@ -598,7 +603,100 @@ struct DomainStats
             return;
         }
 
-        OracleResult orc = oracle_solve(from, to, lim, tab);
+        // Direction-aware vs signed-alphabet comparability (KB-100): the
+        // production checker bounds acceleration relative to the motion
+        // direction (PLCopen Acc/Dec semantics), while this oracle's
+        // saturation arcs are the signed pair {+a_max, -d_max}. The two
+        // agree exactly while v >= 0. Direction-aware physics is mirror
+        // invariant, so a trajectory confined to v <= 0 is solved on the
+        // mirrored problem (where the signed alphabet is direction-correct);
+        // mixed-sign trajectories under asymmetric bounds have no valid T*
+        // in this alphabet and are counted out instead of asserted.
+        const bool asymmetric = lim.max_acceleration != lim.max_deceleration;
+        // Mirror the production gate's KB-055 velocity exemptions into the
+        // reference limits so the comparison is like for like: an entry
+        // velocity above the limit decays into the envelope, and the
+        // quantized zeroing ramp legally reaches v0 + a0*n0/2.
+        otg::Limits1D ref = lim;
+        if(std::fabs(from.velocity) > ref.max_velocity) {
+            ref.max_velocity = std::fabs(from.velocity);
+        }
+        if(from.acceleration != 0.0) {
+            const double n0 =
+                std::ceil(std::fabs(from.acceleration) / lim.max_jerk);
+            const double reduced_v =
+                std::fabs(from.velocity + 0.5 * from.acceleration * n0);
+            if(reduced_v > ref.max_velocity) {
+                ref.max_velocity = reduced_v;
+            }
+        }
+        otg::State1D oracle_from = from;
+        otg::Target1D oracle_to = to;
+        if(asymmetric) {
+            bool has_pos = from.velocity > 1e-12 || to.velocity > 1e-12;
+            bool has_neg = from.velocity < -1e-12 || to.velocity < -1e-12;
+            const std::int64_t total = planned.value().duration_cycles();
+            for(std::int64_t cyc = 1; cyc <= total && !(has_pos && has_neg);
+                ++cyc) {
+                const double v =
+                    otg::sample(planned.value(),
+                                plcopen::core::rt::CycleTick::from_cycles(cyc))
+                        .velocity;
+                if(v > 1e-12) {
+                    has_pos = true;
+                } else if(v < -1e-12) {
+                    has_neg = true;
+                }
+            }
+            if(has_pos && has_neg) {
+                // Mixed-sign trajectory: no exact T* in the signed alphabet.
+                // Solve with the symmetric relaxed bound max(a_max, d_max) —
+                // a superset of the direction-aware admissible controls in
+                // every regime, so T*_relaxed <= T*_aware and the negative
+                // gate stays a valid violation detector (tight optimality
+                // statistics come from the single-sign tiers only).
+                otg::Limits1D relaxed = ref;
+                relaxed.max_acceleration =
+                    std::fmax(lim.max_acceleration, lim.max_deceleration);
+                relaxed.max_deceleration = relaxed.max_acceleration;
+                OracleResult relaxed_orc =
+                    oracle_solve(from, to, relaxed, tab);
+                if(!relaxed_orc.found) {
+                    ++oracle_miss;
+                    return;
+                }
+                std::int64_t relaxed_c =
+                    static_cast<std::int64_t>(std::ceil(relaxed_orc.time));
+                if(relaxed_c < 1) relaxed_c = 1;
+                const std::int64_t plan_relaxed =
+                    planned.value().duration_cycles();
+                if(plan_relaxed < relaxed_c && hard_gate) {
+                    if(fail < 3)
+                        std::printf(
+                            "  FAIL-RELAXED i=%d plan=%lld oracle=%lld "
+                            "T*=%.6f from=(%.17g,%.17g,%.17g) "
+                            "to=(%.17g,%.17g,%.17g) "
+                            "lim=(%.17g,%.17g,%.17g,%.17g)\n",
+                            case_id, (long long)plan_relaxed,
+                            (long long)relaxed_c, relaxed_orc.time,
+                            from.position, from.velocity, from.acceleration,
+                            to.position, to.velocity, to.acceleration,
+                            lim.max_velocity, lim.max_acceleration,
+                            lim.max_deceleration, lim.max_jerk);
+                    ++fail;
+                    return;
+                }
+                ++relaxed_compared;
+                return;
+            }
+            if(has_neg) {
+                oracle_from = {-from.position, -from.velocity,
+                               -from.acceleration};
+                oracle_to = {-to.position, -to.velocity, -to.acceleration};
+            }
+        }
+
+        OracleResult orc = oracle_solve(oracle_from, oracle_to, ref, tab);
         if(!orc.found) {
             ++oracle_miss;
             return;
@@ -614,9 +712,24 @@ struct DomainStats
             if(fail < 3)
                 std::printf(
                     "  FAIL i=%d excess=%lld plan=%lld oracle=%lld "
-                    "T*=%.6f\n",
+                    "T*=%.6f from=(%.17g,%.17g,%.17g) to=(%.17g,%.17g,%.17g) "
+                    "lim=(%.17g,%.17g,%.17g,%.17g)\n",
                     case_id, (long long)excess, (long long)plan_c,
-                    (long long)oracle_c, orc.time);
+                    (long long)oracle_c, orc.time,
+                    from.position, from.velocity, from.acceleration,
+                    to.position, to.velocity, to.acceleration,
+                    lim.max_velocity, lim.max_acceleration,
+                    lim.max_deceleration, lim.max_jerk);
+            ++fail;
+            return;
+        }
+        if(ec_cap > 0 && excess > ec_cap) {
+            if(fail < 3)
+                std::printf(
+                    "  FAIL-CAP i=%d excess=%lld cap=%d plan=%lld "
+                    "oracle=%lld\n",
+                    case_id, (long long)excess, ec_cap, (long long)plan_c,
+                    (long long)oracle_c);
             ++fail;
             return;
         }
@@ -631,9 +744,10 @@ struct DomainStats
     void report(const char *domain) const
     {
         std::printf("  [%s] attempted=%d planner_fail=%d oracle_miss=%d "
-                    "negative_fail=%d compared=%d",
+                    "negative_fail=%d relaxed_compared=%d "
+                    "convention_excluded=%d compared=%d",
                     domain, attempted, planner_fail, oracle_miss, fail,
-                    compared);
+                    relaxed_compared, convention_excluded, compared);
         if(compared > 0) {
             std::printf(" max=%d avg=%.2f", ec_max, ec_sum / compared);
             if(ec_min < 0) std::printf(" min=%d", ec_min);
@@ -641,10 +755,13 @@ struct DomainStats
         std::printf("\n");
         std::printf(
             "OTG_ORACLE_METRICS domain=%s attempted=%d planner_fail=%d "
-            "oracle_miss=%d negative_fail=%d compared=%d excess_min=%d "
-            "excess_max=%d excess_sum=%.0f hard_gate=%d\n",
-            domain, attempted, planner_fail, oracle_miss, fail, compared,
-            ec_min, ec_max, ec_sum, hard_gate ? 1 : 0);
+            "oracle_miss=%d negative_fail=%d relaxed_compared=%d "
+            "convention_excluded=%d "
+            "compared=%d excess_min=%d "
+            "excess_max=%d excess_sum=%.0f hard_gate=%d ec_cap=%d\n",
+            domain, attempted, planner_fail, oracle_miss, fail,
+            relaxed_compared, convention_excluded, compared,
+            ec_min, ec_max, ec_sum, hard_gate ? 1 : 0, ec_cap);
     }
 };
 
@@ -658,6 +775,7 @@ int check_excess_cycles(int iterations)
     // Domain 1: regular — random states within limits
     {
         DomainStats ds;
+        ds.ec_cap = 8; // KB-100 suboptimality upper bound (measured max x ~2)
         for(int i = 0; i < iterations; ++i) {
             double vm = rng.range(0.5, 8.0);
             double am = rng.range(0.5, 8.0);
@@ -677,6 +795,7 @@ int check_excess_cycles(int iterations)
     // Domain 2: pin-boundary — velocities near ±v_max
     {
         DomainStats ds;
+        ds.ec_cap = 6; // KB-100 suboptimality upper bound (measured max x ~2)
         for(int i = 0; i < iterations; ++i) {
             double vm = rng.range(1.0, 6.0);
             double am = rng.range(0.5, 6.0);
@@ -698,6 +817,7 @@ int check_excess_cycles(int iterations)
     // Domain 3: bump — short distance, similar start/end velocities
     {
         DomainStats ds;
+        ds.ec_cap = 6; // KB-100 suboptimality upper bound (measured max x ~2)
         for(int i = 0; i < iterations; ++i) {
             double vm = rng.range(1.0, 6.0);
             double am = rng.range(0.5, 6.0);
@@ -721,6 +841,7 @@ int check_excess_cycles(int iterations)
     // lower bound on plan's integer-cycle count.
     {
         DomainStats ds;
+        ds.ec_cap = 8; // KB-100 suboptimality upper bound (measured max x ~2)
         ds.hard_gate = false;
         for(int i = 0; i < iterations; ++i) {
             double vm = rng.range(1.0, 6.0);
@@ -746,6 +867,7 @@ int check_excess_cycles(int iterations)
     // No hard gate: targeting ramp uses adjusted jerk (j'=at/n), not PMP.
     {
         DomainStats ds;
+        ds.ec_cap = 10; // KB-100 suboptimality upper bound (measured max x ~2)
         ds.hard_gate = false;
         for(int i = 0; i < iterations; ++i) {
             double vm = rng.range(1.0, 6.0);
@@ -769,6 +891,7 @@ int check_excess_cycles(int iterations)
     // Domain 6: both a0 and at nonzero
     {
         DomainStats ds;
+        ds.ec_cap = 10; // KB-100 suboptimality upper bound (measured max x ~2)
         ds.hard_gate = false;
         for(int i = 0; i < iterations; ++i) {
             double vm = rng.range(1.0, 6.0);

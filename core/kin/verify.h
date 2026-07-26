@@ -2,7 +2,9 @@
 
 // Kinematics plugin conformance harness (approved matrix, decisions #2/#8):
 // round-trip consistency (inverse(forward(q), seed=q) == q), seed-branch
-// stability along continuous joint paths, and singularity-margin sanity,
+// stability along continuous joint paths, and singularity-margin sanity for
+// plugins that declare `MarginSemantics::angular` (sentinel plugins declare
+// `none` and the margin probe is skipped and reported as skipped),
 // driven by a deterministic LCG over caller-supplied joint ranges. The
 // contract is asserted here, not trusted: every reference implementation and
 // every third-party plugin runs the same harness.
@@ -27,6 +29,9 @@ struct VerifyReport
     int round_trips = 0;
     int branch_steps = 0;
     double worst_round_trip_error = 0.0;
+    // True when the plugin declared an angular margin, so the probe joints
+    // were checked against it; false when it declared a sentinel.
+    bool margin_checked = false;
 };
 
 namespace detail
@@ -64,10 +69,20 @@ inline rt::ErrorCode verify_kinematics(const Kinematics &plugin,
     double q[8] = {};
     double solved[8] = {};
 
+    // An angular margin is a real measure and must be finite and non-negative
+    // at every probe state; a sentinel margin carries no such claim.
+    report.margin_checked = plugin.margin_semantics() == MarginSemantics::angular;
+
     // Round trip: inverse(forward(q), seed=q) must reproduce q.
     for(int i = 0; i < iterations; ++i) {
         for(std::size_t j = 0; j < joints; ++j) {
             q[j] = rng.range(joint_ranges[j].minimum, joint_ranges[j].maximum);
+        }
+        if(report.margin_checked) {
+            const double margin = plugin.singularity_margin(q, joints);
+            if(!std::isfinite(margin) || margin < 0.0) {
+                return rt::ErrorCode::out_of_range;
+            }
         }
         geom::Vec3 cartesian{};
         rt::ErrorCode result = plugin.forward(q, joints, cartesian);

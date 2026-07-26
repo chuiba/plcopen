@@ -50,8 +50,8 @@ int check_bridge_equivalence()
     axis::AxisModel bridged;
     direct.set_power(true);
     bridged.set_power(true);
-    direct.submit(make_move(3.0));
-    bridged.submit(make_move(3.0));
+    (void)direct.submit(make_move(3.0));
+    (void)bridged.submit(make_move(3.0));
 
     adapters::ServoSim sim;
     sim.set_digital_input(2, true);
@@ -324,7 +324,7 @@ int check_mode_manager_bumpless()
 
     axis::AxisModel axis;
     axis.set_power(true);
-    axis.submit(make_move(5.0));
+    (void)axis.submit(make_move(5.0));
 
     const adapters::OperationMode sequence[4] = {
         adapters::OperationMode::csv, adapters::OperationMode::cst,

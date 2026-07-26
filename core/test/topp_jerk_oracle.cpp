@@ -254,6 +254,99 @@ int check_zero_length()
     return 0;
 }
 
+// KB-098 measurement: the pointwise-min merge of the forward/backward
+// envelopes has an sdot^2 slope discontinuity at the switch index, so the
+// implied per-axis jerk there DIVERGES as the grid refines (1/ds signature).
+// This gate pins the measured worst ratios (ratchet: a future repair pass
+// may only lower them) and keeps the divergence on the record.
+double merged_grid_worst_jerk_ratio(const geom::PathSegment &seg,
+                                    const plan::ToppJerkAxisLimits limits[3],
+                                    int grid)
+{
+    plan::ToppJerkProfile merged{};
+    const auto r = plan::solve_topp_ra_jerk(seg, limits, grid, &merged);
+    if(!r || merged.grid_points < 3) {
+        return -1.0;
+    }
+    const int n = merged.grid_points;
+    const double ds = merged.ds;
+    double worst = 0.0;
+    for(int k = 1; k + 1 < n; ++k) {
+        const double v = std::sqrt(std::max(merged.x[k], 0.0));
+        const double a_here = (merged.x[k + 1] - merged.x[k]) / (2.0 * ds);
+        const double a_prev = (merged.x[k] - merged.x[k - 1]) / (2.0 * ds);
+        const double sddd = (a_here - a_prev) / ds * v;
+        const double s = ds * static_cast<double>(k);
+        const geom::Vec3 q_s = seg.path_derivative(s);
+        const geom::Vec3 q_ss = seg.path_second_derivative(s);
+        const geom::Vec3 q_sss = seg.path_third_derivative(s);
+        const double qs[3] = {q_s.x, q_s.y, q_s.z};
+        const double qss[3] = {q_ss.x, q_ss.y, q_ss.z};
+        const double qsss[3] = {q_sss.x, q_sss.y, q_sss.z};
+        for(int i = 0; i < 3; ++i) {
+            if(limits[i].max_jerk <= 0.0) {
+                continue;
+            }
+            const double jerk = std::fabs(qsss[i] * v * v * v +
+                                          3.0 * qss[i] * v * a_here +
+                                          qs[i] * sddd);
+            worst = std::max(worst, jerk / limits[i].max_jerk);
+        }
+    }
+    return worst;
+}
+
+int check_merge_corner_jerk()
+{
+    const plan::ToppJerkAxisLimits limits[3] = {
+        {3.0, 10.0, 30.0}, {3.0, 10.0, 30.0}, {3.0, 10.0, 30.0}};
+
+    struct Scenario
+    {
+        const char *name;
+        geom::PathSegment seg;
+        double cap50;
+        double cap400;
+    };
+
+    const auto line = geom::make_line({0.0, 0.0, 0.0}, {5.0, 0.0, 0.0});
+    const auto arc1 = geom::make_arc({1.0, 0.0, 0.0}, {0.0, 1.0, 0.0},
+                                     {-1.0, 0.0, 0.0});
+    const auto arc05 = geom::make_arc({0.5, 0.0, 0.0}, {0.0, 0.5, 0.0},
+                                      {-0.5, 0.0, 0.0});
+    const auto cubic = geom::make_cubic_bezier(
+        {0.0, 0.0, 0.0}, {1.0, 2.0, 0.0}, {3.0, 2.0, 0.0}, {4.0, 0.0, 0.0});
+    if(!line || !arc1 || !arc05 || !cubic) {
+        return fail("merge_corner_jerk construction");
+    }
+
+    // Ratchet caps = measured-today x 1.25 headroom; a repair pass may only
+    // lower these. The N=400 >> N=50 growth is the recorded divergence.
+    const Scenario scenarios[] = {
+        {"line_5", geom::as_path_segment(line.value()), 11.5, 68.0},
+        {"half_arc_R1", geom::as_path_segment(arc1.value()), 8.5, 77.0},
+        {"tight_arc_R05", geom::as_path_segment(arc05.value()), 31.0, 239.0},
+        {"cubic_S", geom::as_path_segment(cubic.value()), 12.5, 86.0},
+    };
+
+    for(const Scenario &sc : scenarios) {
+        const double r50 = merged_grid_worst_jerk_ratio(sc.seg, limits, 50);
+        const double r400 = merged_grid_worst_jerk_ratio(sc.seg, limits, 400);
+        if(r50 < 0.0 || r400 < 0.0) {
+            return fail("merge_corner_jerk solve");
+        }
+        std::printf("  merge_corner_jerk %s: ratio N=50 %.3f, N=400 %.3f\n",
+                    sc.name, r50, r400);
+        if(r50 > sc.cap50 || r400 > sc.cap400) {
+            std::printf("  cap exceeded (caps %.1f / %.1f)\n", sc.cap50,
+                        sc.cap400);
+            return fail("merge_corner_jerk ratchet");
+        }
+    }
+    std::printf("  PASS merge_corner_jerk (KB-098 optimistic-bound ratchet)\n");
+    return 0;
+}
+
 } // namespace
 
 int main()
@@ -267,6 +360,7 @@ int main()
     failures += check_grid_convergence_jerk();
     failures += check_cubic_bezier_jerk();
     failures += check_zero_length();
+    failures += check_merge_corner_jerk();
     std::printf("---\n%d failures\n", failures);
     return failures;
 }
