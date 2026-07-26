@@ -561,6 +561,9 @@ if(PLCOPEN_BUILD_DEMOS)
     add_executable(plcopen_core_trajectory_stream demo/trajectory_stream.cpp)
     target_link_libraries(plcopen_core_trajectory_stream PRIVATE plcopen::plcopen)
 
+    add_executable(plcopen_core_feetech_arm_runner demo/feetech_arm_runner.cpp)
+    target_link_libraries(plcopen_core_feetech_arm_runner PRIVATE plcopen::core)
+
     add_executable(plcopen_core_rt_executor_demo demo/rt_executor_demo.cpp)
     target_link_libraries(plcopen_core_rt_executor_demo PRIVATE plcopen::core)
     if(UNIX AND NOT APPLE)
@@ -579,6 +582,12 @@ if(PLCOPEN_BUILD_DEMOS)
         add_test(NAME plcopen_core_trajectory_stream_smoke COMMAND plcopen_core_trajectory_stream)
         add_test(NAME plcopen_core_group_path_motion_smoke COMMAND plcopen_core_group_path_motion)
         add_test(NAME plcopen_core_st_motion_smoke COMMAND plcopen_core_st_motion)
+        add_test(NAME plcopen_core_feetech_arm_runner_smoke
+                 COMMAND plcopen_core_feetech_arm_runner --dry-run
+                         --cycles 300 --hz 50)
+        set_tests_properties(plcopen_core_feetech_arm_runner_smoke PROPERTIES
+            PASS_REGULAR_EXPRESSION "RUNNER PASS"
+            FAIL_REGULAR_EXPRESSION "RUNNER FAIL")
         add_test(NAME plcopen_core_rt_executor_smoke
                  COMMAND plcopen_core_rt_executor_demo --cycles 2000 --trace
                          ${CMAKE_CURRENT_BINARY_DIR}/rt_executor_trace_smoke.bin)
