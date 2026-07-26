@@ -609,6 +609,12 @@ if(PLCOPEN_BUILD_DEMOS)
                         tools.test_feetech_verify -v)
             set_tests_properties(plcopen_feetech_verify_tool_tests PROPERTIES
                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+            add_test(
+                NAME plcopen_so_arm_twin_fixture_tests
+                COMMAND ${Python3_EXECUTABLE} -m unittest
+                        tools.test_so_arm_twin -v)
+            set_tests_properties(plcopen_so_arm_twin_fixture_tests PROPERTIES
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
         endif()
     endif()
 endif()
