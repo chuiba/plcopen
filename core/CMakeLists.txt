@@ -341,6 +341,13 @@ if(BUILD_TESTING AND PLCOPEN_BUILD_CORE_TESTS)
     add_test(NAME plcopen_core_joint_stream_group_tests
              COMMAND plcopen_core_joint_stream_group_tests)
 
+    add_executable(plcopen_core_stream_ab_metrics_tests
+                   test/stream_ab_metrics_tests.cpp)
+    target_link_libraries(plcopen_core_stream_ab_metrics_tests PRIVATE plcopen::core)
+    plcopen_core_rt_compile_options(plcopen_core_stream_ab_metrics_tests)
+    add_test(NAME plcopen_core_stream_ab_metrics_tests
+             COMMAND plcopen_core_stream_ab_metrics_tests)
+
     add_executable(plcopen_core_wrist6r_tests test/wrist6r_tests.cpp)
     target_link_libraries(plcopen_core_wrist6r_tests PRIVATE plcopen::core)
     plcopen_core_rt_compile_options(plcopen_core_wrist6r_tests)

@@ -20,10 +20,10 @@
 
 | 批 | 名 | 内容 | 前置 | DoD |
 |----|----|------|------|-----|
-| **SA1** | 4.8 核验工具面（软件，本批） | `tools/feetech_verify.py`：总线扫描 / 寄存器读取 / **速度与加速度单位系数标定序列** / Status 位采样 / JSON 证据报告——即已批矩阵 §5"标定工具面（tools/，随 S5）"与 4.8 关卡的测量仪器。协议编解码与既有 C++ 黄金字节向量逐字节对齐，CI 以进程内寄存器映像假总线全流程测试 | 无 | 工具 CTest 全绿；黄金向量与 `feetech_tests.cpp` 一致；无硬件依赖 |
-| SA2 | 宿主串口 runner（软件 + dry-run） | 宿主字节泵：`FeetechBus` tx/rx 缓冲 ↔ 串口（矩阵 2.1"传输留宿主"）；周期档 50Hz 起步（矩阵 2.8 预算）；`--dry-run` 走 FeetechSim 进 CI | SA1 | dry-run CTest 全绿；真机口径不声明 |
-| SA3 | 孪生对拍（软件） | T2b 通用装载器（1–48 hinge，本地 MJCF 路径）接 SO-ARM101 模型：维护者本地提供社区 MJCF（仓库不 vendor 厂商模型，KB-093 纪律），或仓库自有 primitive 六连杆 fixture 兜底 | SA2 | 同令流打 sim 的闭环 CTest；模型保真度不声明 |
-| SA4 | stream 升频演示（软件） | 30–100Hz 意图流（数据集回放格式）→ `JointStreamGroup` upsample → runner/sim；量化 AB：裸下发 vs 经滤波的 jerk/平滑度/跟踪 | SA2/SA3 | AB 指标进测试；即 H1 计划 S6 的 LeRobot 互通评估素材 |
+| **SA1** ✅ | 4.8 核验工具面（软件，已交付） | `tools/feetech_verify.py`：总线扫描 / 寄存器读取 / **速度与加速度单位系数标定序列** / Status 位采样 / JSON 证据报告——即已批矩阵 §5"标定工具面（tools/，随 S5）"与 4.8 关卡的测量仪器。协议编解码与既有 C++ 黄金字节向量逐字节对齐，CI 以进程内寄存器映像假总线全流程测试 | 无 | 工具 CTest 全绿；黄金向量与 `feetech_tests.cpp` 一致；无硬件依赖 |
+| **SA2** ✅ | 宿主串口 runner（软件 + dry-run，已交付：dry-run 1800/1800 响应、50Hz 占用 7.7%） | 宿主字节泵：`FeetechBus` tx/rx 缓冲 ↔ 串口（矩阵 2.1"传输留宿主"）；周期档 50Hz 起步（矩阵 2.8 预算）；`--dry-run` 走 FeetechSim 进 CI | SA1 | dry-run CTest 全绿；真机口径不声明 |
+| **SA3** ✅ | 孪生对拍（软件，已交付：primitive 六关节拓扑 fixture + 静态契约/闭环双层测试） | T2b 通用装载器（1–48 hinge，本地 MJCF 路径）接 SO-ARM101 模型：维护者本地提供社区 MJCF（仓库不 vendor 厂商模型，KB-093 纪律），或仓库自有 primitive 六连杆 fixture 兜底 | SA2 | 同令流打 sim 的闭环 CTest；模型保真度不声明 |
+| **SA4** ✅ | stream 升频演示（软件，已交付：ZOH vs 滤波 jerk 分离 268-303×、跟踪误差 ≤0.015 rad、棘轮门入 CTest） | 30–100Hz 意图流（数据集回放格式）→ `JointStreamGroup` upsample → runner/sim；量化 AB：裸下发 vs 经滤波的 jerk/平滑度/跟踪 | SA2/SA3 | AB 指标进测试；即 H1 计划 S6 的 LeRobot 互通评估素材 |
 | **S5-HW** | 真机三步（**硬件在手**） | ① 用 SA1 工具在真机上执行 4.8 核验（单位系数 + Status 位锁定）→ ② KB-074 边界解除（声明变更：矩阵 2.6/2.11 待核项落数值，更新语义矩阵与 KB）→ ③ H1-S5 原义剧本（标定/MC_HomeDirect 回零/S3-S4 真机复现）与商用证据总账首行真机数据 | SA1-SA4 + 硬件 | 真机证据归档；此前一切"真机"表述禁用 |
 
 ## 3. 边界（本计划显式不声明）
