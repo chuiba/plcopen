@@ -58,6 +58,22 @@ class CsvLoaderTests(unittest.TestCase):
             self.assertEqual(episode.timestamps, [0.0, 0.02, 0.04])
             self.assertEqual(episode.joint_names, ["joint1", "joint2"])
 
+    def test_bom_header_is_recognized(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "bom.csv"
+            path.write_bytes(b"\xef\xbb\xbf" + FIXTURE.read_bytes())
+            episode = bridge.load_csv(path)
+            self.assertEqual(episode.joint_count, 6)
+            self.assertEqual(episode.joint_names[0], "joint1")
+
+    def test_zero_fps_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "plain.csv"
+            path.write_text("0.0,0.1\n0.2,0.3\n0.4,0.5\n")
+            with self.assertRaisesRegex(bridge.ReplayError, "positive"):
+                bridge.load_csv(path, fps=0.0)
+            self.assertEqual(bridge.main(["info", str(path), "--fps", "0"]), 2)
+
     def test_malformed_csv_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             ragged = Path(directory) / "ragged.csv"
@@ -113,6 +129,19 @@ class JsonLoaderTests(unittest.TestCase):
             with self.assertRaisesRegex(bridge.ReplayError, "fps"):
                 bridge.load_json(path)
 
+    def test_json_malformed_shapes_raise_replay_error(self) -> None:
+        cases = [
+            {"frames": 5, "fps": 30},
+            {"frames": [[1.0], [2.0]], "timestamps": [0.0, "x"]},
+            {"frames": [[1.0], [2.0]], "fps": "abc"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            for index, payload in enumerate(cases):
+                path = Path(directory) / f"bad{index}.json"
+                path.write_text(json.dumps(payload))
+                with self.assertRaises(bridge.ReplayError, msg=str(payload)):
+                    bridge.load_json(path)
+
 
 class CycleFrameTests(unittest.TestCase):
     def test_fixture_maps_to_1khz_cycles(self) -> None:
@@ -133,6 +162,11 @@ class CycleFrameTests(unittest.TestCase):
         self.assertTrue(
             all(b > a for a, b in zip(frames.stamps, frames.stamps[1:]))
         )
+        # The bump count exposes that this mapping stretched the time base
+        # (30 fps into 10 Hz: every frame after the first collides).
+        self.assertEqual(frames.bumped_frames, 90)
+        fine = bridge.to_cycle_frames(episode)
+        self.assertEqual(fine.bumped_frames, 0)
 
     def test_scale_offset_and_joint_count(self) -> None:
         episode = bridge.load_csv(FIXTURE)
@@ -202,7 +236,7 @@ class DatasetRootTests(unittest.TestCase):
             episode_file.parent.mkdir(parents=True)
             episode_file.write_bytes(b"")
             resolved, fps = bridge.resolve_lerobot_episode_file(root, 2)
-            self.assertEqual(resolved, episode_file)
+            self.assertEqual(resolved, episode_file.resolve())
             self.assertEqual(fps, 30.0)
             with self.assertRaisesRegex(bridge.ReplayError, "not found"):
                 bridge.resolve_lerobot_episode_file(root, 3)
@@ -211,6 +245,45 @@ class DatasetRootTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(bridge.ReplayError, "info.json"):
                 bridge.resolve_lerobot_episode_file(Path(directory), 0)
+
+    def _write_info(self, root: Path, payload: dict) -> None:
+        (root / "meta").mkdir(exist_ok=True)
+        (root / "meta" / "info.json").write_text(json.dumps(payload))
+
+    def test_untrusted_data_path_is_contained(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            # Absolute template: must not escape the dataset root.
+            self._write_info(root, {"fps": 30, "data_path": "/etc/hostname"})
+            with self.assertRaisesRegex(bridge.ReplayError, "relative"):
+                bridge.resolve_lerobot_episode_file(root, 0)
+            # Parent-directory traversal: same containment rule.
+            self._write_info(
+                root, {"fps": 30, "data_path": "../outside_{episode_index}.parquet"}
+            )
+            with self.assertRaisesRegex(bridge.ReplayError, "escapes"):
+                bridge.resolve_lerobot_episode_file(root, 0)
+
+    def test_non_v2_template_and_bad_chunks_size_are_replay_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            # LeRobot v3 layout uses {chunk_index}/{file_index}: clean error,
+            # not a raw KeyError.
+            self._write_info(
+                root,
+                {
+                    "fps": 30,
+                    "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
+                },
+            )
+            with self.assertRaisesRegex(bridge.ReplayError, "data_path template"):
+                bridge.resolve_lerobot_episode_file(root, 0)
+            self._write_info(
+                root,
+                {"fps": 30, "chunks_size": 0, "data_path": "data/e_{episode_index}.parquet"},
+            )
+            with self.assertRaisesRegex(bridge.ReplayError, "chunks_size"):
+                bridge.resolve_lerobot_episode_file(root, 0)
 
 
 @unittest.skipUnless(
@@ -286,7 +359,65 @@ class ReplaySimTests(unittest.TestCase):
             self.assertEqual(payload["tool"], "lerobot_replay")
             self.assertEqual(payload["failures"], [])
             self.assertEqual(payload["result"]["rejected_frames"], 0)
+            self.assertEqual(payload["bumped_frames"], 0)
             self.assertEqual(len(payload["result"]["joints"]), 6)
+
+    def test_out_of_envelope_mapping_is_a_clean_error(self) -> None:
+        # Fixture max |q| is ~0.47; scale 100 exceeds the default ±pi
+        # envelope of the sim facade. Must exit 2 (usage error), not a
+        # traceback, and must point at the mapping flags.
+        code = bridge.main(["replay-sim", str(FIXTURE), "--scale", "100"])
+        self.assertEqual(code, 2)
+
+    def test_position_limit_flag_admits_scaled_units(self) -> None:
+        episode = bridge.load_csv(FIXTURE)
+        frames = bridge.to_cycle_frames(episode, scale=[100.0], joint_count=1)
+        result = bridge.replay_sim(
+            frames,
+            velocity_limit=80.0,
+            acceleration_limit=8.0,
+            jerk_limit=2.0,
+            position_limit=100.0,
+        )
+        self.assertEqual(result.rejected_frames, 0)
+        self.assertEqual(result.dropouts, 0)
+
+    def test_short_episode_tracking_is_measured(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "short.csv"
+            path.write_text(
+                "timestamp,j1\n0.000000,0.0\n0.033333,0.3\n"
+                "0.066667,0.6\n0.100000,0.9\n"
+            )
+            frames = bridge.to_cycle_frames(bridge.load_csv(path))
+            result = bridge.replay_sim(frames)
+            # An empty window must not report a perfect 0.0.
+            self.assertGreater(result.joints[0].tracking_error, 0.0)
+
+    def test_constant_episode_report_stays_valid_json(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "const.csv"
+            rows = ["timestamp,j1,j2"] + [
+                f"{i / 30.0:.6f},0.100000,-0.200000" for i in range(30)
+            ]
+            path.write_text("\n".join(rows) + "\n")
+            report = Path(directory) / "report.json"
+            code = bridge.main(
+                ["replay-sim", str(path), "--report", str(report)]
+            )
+            self.assertEqual(code, 0)
+            text = report.read_text()
+            self.assertNotIn("Infinity", text)
+            payload = json.loads(text)
+            self.assertIsNone(payload["result"]["joints"][0]["separation"])
+
+    def test_missing_report_parent_fails_before_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "no-such-dir" / "report.json"
+            code = bridge.main(
+                ["replay-sim", str(FIXTURE), "--report", str(missing)]
+            )
+            self.assertEqual(code, 2)
 
 
 class CliInfoTests(unittest.TestCase):

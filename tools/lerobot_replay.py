@@ -12,9 +12,10 @@ Layering (mirrors the SA1 instrument discipline):
   parquet reading is an OPTIONAL dependency path (pyarrow, else pandas),
   imported only when a parquet source is opened; CSV/JSON loaders cover the
   dependency-free case and CI.
-- Unit mapping is EXPLICIT (--scale/--offset). The 4.8 gate of the approved
-  Feetech matrix keeps physical unit scales unverified, so this tool bakes in
-  no unit constants whatsoever; the caller states the dataset-to-radian (or
+- Unit mapping is EXPLICIT (--scale/--offset, plus --position-limit for the
+  sim facade's position envelope). The 4.8 gate of the approved Feetech
+  matrix keeps physical unit scales unverified, so this tool bakes in no
+  unit constants whatsoever; the caller states the dataset-to-radian (or
   any other) mapping in full.
 - No dataset is vendored: the repository ships only a synthetic fixture
   (tools/fixtures/so_arm_synthetic_30fps.csv); real datasets are local paths
@@ -107,8 +108,18 @@ def _infer_fps(timestamps: Sequence[float]) -> float:
 # --- standard-library loaders (CSV / JSON) ----------------------------------
 
 
+def _check_fps_argument(fps: Optional[float]) -> Optional[float]:
+    if fps is not None and not (math.isfinite(fps) and fps > 0.0):
+        raise ReplayError(f"fps must be positive and finite, got {fps}")
+    return fps
+
+
 def load_csv(path: Path, fps: Optional[float] = None) -> Episode:
-    with open(path, newline="") as handle:
+    fps = _check_fps_argument(fps)
+    # utf-8-sig: tolerate the BOM that Excel/pandas prepend on Windows —
+    # without it the first header cell reads "﻿timestamp" and the
+    # timestamp column would silently load as a joint.
+    with open(path, newline="", encoding="utf-8-sig") as handle:
         rows = [row for row in csv.reader(handle) if row]
     if not rows:
         raise ReplayError(f"{path}: empty CSV")
@@ -174,22 +185,38 @@ def load_csv(path: Path, fps: Optional[float] = None) -> Episode:
 
 
 def load_json(path: Path, fps: Optional[float] = None) -> Episode:
-    with open(path) as handle:
+    fps = _check_fps_argument(fps)
+    with open(path, encoding="utf-8-sig") as handle:
         payload = json.load(handle)
     if not isinstance(payload, dict) or "frames" not in payload:
         raise ReplayError(f"{path}: expected an object with a 'frames' array")
-    frames = [[float(value) for value in row] for row in payload["frames"]]
+    try:
+        frames = [[float(value) for value in row] for row in payload["frames"]]
+    except (TypeError, ValueError) as error:
+        raise ReplayError(
+            f"{path}: 'frames' must be an array of numeric rows ({error})"
+        ) from None
     if fps is None:
-        fps = payload.get("fps")
+        try:
+            fps = _check_fps_argument(
+                float(payload["fps"]) if "fps" in payload else None
+            )
+        except (TypeError, ValueError) as error:
+            raise ReplayError(f"{path}: malformed 'fps' ({error})") from None
     timestamps = payload.get("timestamps")
     if timestamps is not None:
-        timestamps = [float(value) for value in timestamps]
+        try:
+            timestamps = [float(value) for value in timestamps]
+        except (TypeError, ValueError) as error:
+            raise ReplayError(
+                f"{path}: 'timestamps' must be numeric ({error})"
+            ) from None
         if fps is None:
             fps = _infer_fps(timestamps)
     else:
         if fps is None:
             raise ReplayError(f"{path}: needs 'fps' or 'timestamps'")
-        timestamps = [index / float(fps) for index in range(len(frames))]
+        timestamps = [index / fps for index in range(len(frames))]
     names = payload.get("joint_names")
     if names is None:
         names = [f"joint{index + 1}" for index in range(len(frames[0]))] if frames else []
@@ -230,6 +257,7 @@ def load_parquet(
     column: str = DEFAULT_PARQUET_COLUMN,
     fps: Optional[float] = None,
 ) -> Episode:
+    fps = _check_fps_argument(fps)
     records = _parquet_records(path)
     if not records:
         raise ReplayError(f"{path}: empty parquet table")
@@ -263,7 +291,7 @@ def resolve_lerobot_episode_file(root: Path, episode: int) -> "tuple[Path, float
     info_path = root / "meta" / "info.json"
     if not info_path.is_file():
         raise ReplayError(f"{root}: not a LeRobot v2 dataset root (no meta/info.json)")
-    with open(info_path) as handle:
+    with open(info_path, encoding="utf-8-sig") as handle:
         info = json.load(handle)
     try:
         fps = float(info["fps"])
@@ -271,10 +299,31 @@ def resolve_lerobot_episode_file(root: Path, episode: int) -> "tuple[Path, float
         chunks_size = int(info.get("chunks_size", 1000))
     except (KeyError, TypeError, ValueError) as error:
         raise ReplayError(f"{info_path}: malformed info.json ({error})") from None
-    relative = data_path.format(
-        episode_chunk=episode // chunks_size, episode_index=episode
-    )
-    episode_path = root / relative
+    if chunks_size < 1:
+        raise ReplayError(f"{info_path}: chunks_size must be >= 1, got {chunks_size}")
+    try:
+        relative = data_path.format(
+            episode_chunk=episode // chunks_size, episode_index=episode
+        )
+    except (KeyError, IndexError, ValueError) as error:
+        raise ReplayError(
+            f"{info_path}: unsupported data_path template '{data_path}' ({error}) "
+            "— this tool understands the LeRobot v2 layout "
+            "(episode_chunk/episode_index fields)"
+        ) from None
+    # The template is untrusted content from the dataset: refuse anything
+    # that would resolve outside the dataset root (absolute paths, ..).
+    candidate = Path(relative)
+    if candidate.is_absolute():
+        raise ReplayError(
+            f"{info_path}: data_path must be relative to the dataset root, "
+            f"got '{relative}'"
+        )
+    episode_path = (root / candidate).resolve()
+    if not episode_path.is_relative_to(root.resolve()):
+        raise ReplayError(
+            f"{info_path}: data_path escapes the dataset root: '{relative}'"
+        )
     if not episode_path.is_file():
         raise ReplayError(f"{episode_path}: episode file not found")
     return episode_path, fps
@@ -287,9 +336,14 @@ def load_episode(
     episode: int = 0,
 ) -> Episode:
     path = Path(path)
+    fps = _check_fps_argument(fps)
     if path.is_dir():
         episode_path, dataset_fps = resolve_lerobot_episode_file(path, episode)
-        return load_parquet(episode_path, column=column, fps=fps or dataset_fps)
+        return load_parquet(
+            episode_path,
+            column=column,
+            fps=fps if fps is not None else dataset_fps,
+        )
     suffix = path.suffix.lower()
     if suffix == ".csv":
         return load_csv(path, fps=fps)
@@ -310,6 +364,11 @@ class CycleFrames:
     positions: List[List[float]]
     velocities: List[List[float]]  # per-cycle units, finite-difference ff
     frame_interval: int  # median stamp spacing, cycles
+    # Frames whose rounded stamp collided and was bumped forward. A nonzero
+    # count means the cycle-domain time base is stretched relative to the
+    # episode (cycle_hz at or below the frame rate) — the replay then no
+    # longer represents the dataset timing.
+    bumped_frames: int = 0
 
     @property
     def joint_count(self) -> int:
@@ -351,10 +410,12 @@ def to_cycle_frames(
     stamps: List[int] = []
     positions: List[List[float]] = []
     previous = 0
+    bumped = 0
     for stamp_s, row in zip(episode.timestamps, episode.frames):
         cycle = int(round((stamp_s - base) * cycle_hz)) + 1
         if cycle <= previous:  # keep the KB-035 strictly-increasing contract
             cycle = previous + 1
+            bumped += 1
         previous = cycle
         stamps.append(cycle)
         positions.append(
@@ -386,6 +447,7 @@ def to_cycle_frames(
         positions=positions,
         velocities=velocities,
         frame_interval=max(1, interval),
+        bumped_frames=bumped,
     )
 
 
@@ -462,7 +524,7 @@ def linear_reference(frames: CycleFrames, total_cycles: int, joint: int) -> List
 class JointReplayMetrics:
     zoh: JerkStats
     filtered: JerkStats
-    separation: float
+    separation: Optional[float]  # None when filtered jerk is 0 (nothing moved)
     tracking_error: float
     final_error: float
 
@@ -527,17 +589,27 @@ def replay_sim(
         settle_cycles = 2 * interval
     total_cycles = frames.stamps[-1] + settle_cycles
 
-    stream = pyplcopen.JointStreamSim(
-        frames.joint_count,
-        mode,
-        velocity_limit,
-        acceleration_limit,
-        jerk_limit,
-        timeout_cycles,
-        extrapolation_cycles,
-        position_limit,
-    )
-    stream.reset(list(frames.positions[0]))
+    # The binding surfaces contract violations (limits, the sim facade's
+    # position envelope, non-monotonic stamps) as RuntimeError; translate to
+    # the tool's error contract with actionable context.
+    try:
+        stream = pyplcopen.JointStreamSim(
+            frames.joint_count,
+            mode,
+            velocity_limit,
+            acceleration_limit,
+            jerk_limit,
+            timeout_cycles,
+            extrapolation_cycles,
+            position_limit,
+        )
+        stream.reset(list(frames.positions[0]))
+    except RuntimeError as error:
+        raise ReplayError(
+            f"stream configuration rejected ({error}); check the stream "
+            "limits and that mapped positions fit inside "
+            f"±{position_limit} (--scale/--offset/--position-limit)"
+        ) from None
 
     emitted: List[List[float]] = [[] for _ in range(frames.joint_count)]
     index = 0
@@ -545,11 +617,18 @@ def replay_sim(
     episode_dropouts = 0
     for cycle in range(1, total_cycles + 1):
         if index < len(frames.stamps) and frames.stamps[index] == cycle:
-            stream.push_frame(
-                list(frames.positions[index]),
-                cycle,
-                list(frames.velocities[index]),
-            )
+            try:
+                stream.push_frame(
+                    list(frames.positions[index]),
+                    cycle,
+                    list(frames.velocities[index]),
+                )
+            except RuntimeError as error:
+                raise ReplayError(
+                    f"frame {index} (cycle {cycle}) rejected by the stream "
+                    f"({error}); check that mapped positions fit inside "
+                    f"±{position_limit} (--scale/--offset/--position-limit)"
+                ) from None
             index += 1
             pushed += 1
             if index == len(frames.stamps):
@@ -560,11 +639,14 @@ def replay_sim(
             emitted[joint].append(snapshot["positions"][joint])
 
     joints: List[JointReplayMetrics] = []
-    skip = min(4 * interval, total_cycles)  # let the filter converge first
     # Tracking is judged only while frames keep arriving; the tail after the
     # last frame belongs to final_error (and, past timeout_cycles, to the
-    # watchdog dropout ladder by design).
+    # watchdog dropout ladder by design). Long episodes skip the initial
+    # convergence transient; short ones (under 4 frame intervals) measure
+    # from the start — a transient-polluted number beats reporting a
+    # perfect 0.0 from an empty window.
     tracking_end = min(frames.stamps[-1], total_cycles)
+    skip = 4 * interval if 4 * interval < tracking_end else 0
     for joint in range(frames.joint_count):
         baseline = zoh_track(frames, total_cycles, joint)
         reference = linear_reference(frames, total_cycles, joint)
@@ -582,7 +664,7 @@ def replay_sim(
                 separation=(
                     zoh_stats.max_abs / filtered_stats.max_abs
                     if filtered_stats.max_abs > 0.0
-                    else math.inf
+                    else None  # nothing moved: no meaningful ratio (JSON null)
                 ),
                 tracking_error=tracking,
                 final_error=abs(emitted[joint][-1] - frames.positions[-1][joint]),
@@ -639,6 +721,14 @@ def cmd_info(arguments: argparse.Namespace) -> int:
 
 
 def cmd_replay_sim(arguments: argparse.Namespace) -> int:
+    report_path = Path(arguments.report) if arguments.report is not None else None
+    if report_path is not None and not report_path.parent.is_dir():
+        # Validate before the replay runs so a typo'd path fails fast (exit
+        # 2) instead of discarding a finished measurement with exit 1.
+        raise ReplayError(
+            f"--report parent directory does not exist: {report_path.parent}"
+        )
+
     episode = _load_from_args(arguments)
     frames = to_cycle_frames(
         episode,
@@ -647,6 +737,13 @@ def cmd_replay_sim(arguments: argparse.Namespace) -> int:
         offset=_parse_values(arguments.offset),
         joint_count=arguments.joint_count,
     )
+    if frames.bumped_frames:
+        print(
+            f"WARNING: {frames.bumped_frames} frame stamps collided and were "
+            f"bumped — the cycle-domain time base is stretched and no longer "
+            f"matches the episode timing (cycle_hz {frames.cycle_hz:g} vs "
+            f"episode fps {episode.fps:g})"
+        )
     result = replay_sim(
         frames,
         mode=arguments.mode,
@@ -656,20 +753,24 @@ def cmd_replay_sim(arguments: argparse.Namespace) -> int:
         timeout_cycles=arguments.timeout_cycles,
         extrapolation_cycles=arguments.extrapolation_cycles,
         settle_cycles=arguments.settle_cycles,
+        position_limit=arguments.position_limit,
     )
 
     for joint, metrics in enumerate(result.joints):
+        separation = (
+            f"{metrics.separation:.1f}x" if metrics.separation is not None else "n/a"
+        )
         print(
             f"LEROBOT_AB joint={joint} zoh_max_jerk={metrics.zoh.max_abs:.3e} "
             f"filtered_max_jerk={metrics.filtered.max_abs:.3e} "
-            f"separation={metrics.separation:.1f}x "
+            f"separation={separation} "
             f"tracking_error={metrics.tracking_error:.4f} "
             f"final_error={metrics.final_error:.4f}"
         )
     print(
         f"SUMMARY frames={result.pushed_frames} cycles={result.total_cycles} "
         f"rejected={result.rejected_frames} dropouts={result.dropouts} "
-        f"tail_dropouts={result.tail_dropouts}"
+        f"tail_dropouts={result.tail_dropouts} bumped={frames.bumped_frames}"
     )
 
     failures: List[str] = []
@@ -682,24 +783,31 @@ def cmd_replay_sim(arguments: argparse.Namespace) -> int:
         if worst > arguments.jerk_gate:
             failures.append(f"filtered_max_jerk {worst:.3e} > gate {arguments.jerk_gate:.3e}")
 
-    if arguments.report is not None:
+    if report_path is not None:
         payload = {
             "tool": "lerobot_replay",
             "source": episode.source,
             "cycle_hz": frames.cycle_hz,
             "frame_interval_cycles": frames.frame_interval,
+            "bumped_frames": frames.bumped_frames,
             "mode": arguments.mode,
             "limits": {
                 "velocity": arguments.velocity_limit,
                 "acceleration": arguments.acceleration_limit,
                 "jerk": arguments.jerk_limit,
+                "position": arguments.position_limit,
             },
             "result": result.as_dict(),
             "failures": failures,
         }
-        with open(arguments.report, "w") as handle:
-            json.dump(payload, handle, indent=2)
-        print(f"report written: {arguments.report}")
+        try:
+            with open(report_path, "w") as handle:
+                # allow_nan=False: the evidence report must stay RFC 8259
+                # parseable for non-Python consumers.
+                json.dump(payload, handle, indent=2, allow_nan=False)
+        except (OSError, ValueError) as error:
+            raise ReplayError(f"cannot write report {report_path}: {error}") from None
+        print(f"report written: {report_path}")
 
     if failures:
         print("REPLAY FAIL: " + "; ".join(failures))
@@ -734,6 +842,10 @@ def build_parser() -> argparse.ArgumentParser:
     replay.add_argument("--velocity-limit", type=float, default=0.8, help="per-cycle stream filter limit")
     replay.add_argument("--acceleration-limit", type=float, default=0.08)
     replay.add_argument("--jerk-limit", type=float, default=0.02)
+    replay.add_argument(
+        "--position-limit", type=float, default=math.pi,
+        help="sim facade position envelope ±limit; mapped positions must fit "
+             "inside it (raise for datasets in degrees or normalized units)")
     replay.add_argument("--timeout-cycles", type=int, default=None, help="default: 4x frame interval")
     replay.add_argument("--extrapolation-cycles", type=int, default=None, help="default: 2x frame interval")
     replay.add_argument("--settle-cycles", type=int, default=None, help="default: 2x frame interval")
